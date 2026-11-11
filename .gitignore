@@ -7,3 +7,4 @@ node_modules/
 .bsp/
 **/project/metals.sbt
 .claude/settings.local.json
+.claude/worktrees/
