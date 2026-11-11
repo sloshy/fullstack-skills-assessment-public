@@ -1,5 +1,59 @@
 # Notes
 
+## Scala Task 2: latency under load
+
+### Baseline (before any change)
+
+Measured on `b335265` (unmodified surcharge service) with
+`sbt runProd`, JDK 21.0.9, on WSL2 (12 logical CPUs, 19 GB RAM). The load
+generator is `scripts/load-test.mjs` (Node 22) on the same machine. One 5 s
+warm-up run is discarded, because the script itself doesn't warm up the JVM.
+
+| Run | Workers | Duration | Requests | Throughput | p50 | p95 | p99 | max | Errors |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 64 | 20 s | 15,832 | 790/s | 75.9 ms | 146.4 ms | 188.8 ms | 1181.7 ms | 0 |
+| 2 | 64 | 20 s | 15,903 | 793/s | 76.4 ms | 143.6 ms | 176.3 ms | 1005.0 ms | 0 |
+| 3 | 64 | 20 s | 15,806 | 789/s | 76.6 ms | 141.8 ms | 174.5 ms | 1087.0 ms | 0 |
+| single | 1 | 10 s | 567 | 57/s | 17.6 ms | 22.5 ms | 23.2 ms | 48.7 ms | 0 |
+
+**What it shows:**
+- With one worker (run after the warm-up), a request takes about 17.6 ms
+  end to end. About 10 ms of that is the merchant lookup's
+  `Thread.sleep(5-15 ms)` (`services/onboarding/OnboardingClient.scala:29`).
+  The rest is the linear scan of 221,542 BIN ranges
+  (`services/BinTable.scala:16-22`), HTTP and the client.
+- Under 64 workers the server uses only about 310–370% CPU (3–3.7 of 12
+  cores), yet throughput is stuck at about 790/s, so it isn't CPU-bound.
+  The numbers fit a fixed-size thread pool:
+  - **Pool size:** Play's injected `ExecutionContext` is Pekko's default
+    dispatcher. In `pekko-actor` 1.0.3 it is a fork-join pool with
+    `parallelism-factor = 1.0`, `min = 8`, `max = 64`, so 12 threads here.
+    Neither Play's `reference.conf` nor `conf/application.conf` overrides
+    it. The merchant lookup `Future`, the BIN lookup and Pekko HTTP's
+    request handling all share those 12 threads.
+  - **The pool can't grow:** `Thread.sleep` isn't wrapped in `blocking {}`,
+    so the fork-join pool never adds compensation threads, and the
+    ceiling stays fixed.
+  - **Thread time per request:** 12 threads / 790 per second ≈ 15.2 ms,
+    which is consistent with about 10 ms of sleep plus a few ms of work.
+  - **CPU per request:** 3.5 cores / 790 per second ≈ 4.4 ms, which
+    matches the non-sleep share.
+  - **Little's law:** 64 in flight / 790 per second ≈ 81 ms, consistent
+    with the 76 ms p50. That is queueing behind blocked threads.
+- So the bottleneck is threads blocked in `Thread.sleep` on the shared
+  default dispatcher. The BIN scan is the next cost once that's removed.
+- **Caveats:**
+  - The load generator runs on the same machine, but about 8 cores stay
+    idle, so it isn't starved.
+  - WSL2 adds virtualisation and timer jitter.
+  - The ~1–1.2 s max outliers are unexplained (possibly GC, JIT or WSL
+    scheduling; not investigated).
+
+Reproduce: `cd surcharge-service && sbt runProd`, wait for
+`curl localhost:9000/health`, then
+`node scripts/load-test.mjs --duration 5` (warm-up, discarded) and
+`node scripts/load-test.mjs` three times.
+
 ## Task 7: What would you fix first?
 
 In priority order, beyond what this submission fixes.
