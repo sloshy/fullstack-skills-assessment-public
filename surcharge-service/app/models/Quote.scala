@@ -21,6 +21,17 @@ object QuoteRequest {
     )(QuoteRequest.apply _)
 }
 
+// why a quote carries no surcharge (docs/quote-contract.md, "Reason codes")
+sealed abstract class QuoteReason(val code: String)
+
+object QuoteReason {
+  case object MerchantOptedOut extends QuoteReason("MERCHANT_OPTED_OUT")
+  case object UnknownBin extends QuoteReason("UNKNOWN_BIN")
+  case object NotCredit extends QuoteReason("NOT_CREDIT")
+
+  implicit val QuoteReasonWrites: Writes[QuoteReason] = Writes(r => JsString(r.code))
+}
+
 // amount, surcharge and total are exact decimals derived from the minor-unit fields
 case class Quote(merchantId: String,
                  currency: String,
@@ -34,16 +45,20 @@ case class Quote(merchantId: String,
                  currencyExponent: Int,
                  amountMinor: Long,
                  surchargeMinor: Long,
-                 totalMinor: Long)
+                 totalMinor: Long,
+                 reason: Option[QuoteReason])
 
 object Quote {
-  implicit val QuoteWrites: OWrites[Quote] = Json.writes[Quote]
+  // reason is written as null when surcharged, not left out
+  implicit val QuoteWrites: OWrites[Quote] =
+    Json.configured(JsonConfiguration(optionHandlers = OptionHandlers.WritesNull)).writes[Quote]
 }
 
 sealed trait QuoteError
 object QuoteError {
   case object UnknownMerchant extends QuoteError
   case object InvalidAmount extends QuoteError
+  case object InvalidBin extends QuoteError
   // the merchant's currency has no known exponent, a configuration fault
   case class UnsupportedCurrency(currency: String) extends QuoteError
 }

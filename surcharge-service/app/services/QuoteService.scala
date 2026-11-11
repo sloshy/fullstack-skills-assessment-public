@@ -8,14 +8,19 @@ import scala.concurrent.{ExecutionContext, Future}
 @Singleton
 class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(implicit ec: ExecutionContext) {
 
-  // amount > 0 is checked before the merchant, the amount against the merchant's currency after
+  // checks run in the order docs/quote-contract.md lists them: amount > 0, bin, merchant, then
+  // the amount against the merchant's currency
   def quote(request: QuoteRequest): Future[Either[QuoteError, Quote]] = {
     if (request.amount <= 0) {
       Future.successful(Left(QuoteError.InvalidAmount))
     } else {
-      merchants.find(request.merchantId).map {
-        case None => Left(QuoteError.UnknownMerchant)
-        case Some(merchant) => price(merchant, request.amount, request.bin)
+      BinTable.normalize(request.bin) match {
+        case None => Future.successful(Left(QuoteError.InvalidBin))
+        case Some(bin) =>
+          merchants.find(request.merchantId).map {
+            case None => Left(QuoteError.UnknownMerchant)
+            case Some(merchant) => price(merchant, request.amount, bin)
+          }
       }
     }
   }
@@ -27,13 +32,14 @@ class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(impli
         Money.toMinor(amount, exponent) match {
           case None => Left(QuoteError.InvalidAmount)
           case Some(amountMinor) =>
+            // a lookup that throws fails the future, which is a 500 and never an UNKNOWN_BIN quote
             val card = bins.lookup(bin).getOrElse(CardInfo.Unknown)
-            val surchargeable = merchant.surchargeEnabled && SurchargeRules.isSurchargeable(card)
-            val rate = if (surchargeable) SurchargeRules.rate(merchant) else BigDecimal(0)
-            totals(amountMinor, rate, surchargeable) match {
+            val reason = SurchargeRules.reason(merchant, card)
+            val rate = if (reason.isEmpty) SurchargeRules.rate(merchant) else BigDecimal(0)
+            totals(amountMinor, rate, reason.isEmpty) match {
               case None => Left(QuoteError.InvalidAmount)
               case Some((surchargeMinor, totalMinor)) =>
-                Right(build(merchant, exponent, card, surchargeable, rate, amountMinor, surchargeMinor, totalMinor))
+                Right(build(merchant, exponent, card, reason, rate, amountMinor, surchargeMinor, totalMinor))
             }
         }
     }
@@ -51,7 +57,7 @@ class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(impli
     }
   }
 
-  private def build(merchant: MerchantConfig, exponent: Int, card: CardInfo, surchargeable: Boolean,
+  private def build(merchant: MerchantConfig, exponent: Int, card: CardInfo, reason: Option[QuoteReason],
                     rate: BigDecimal,
                     amountMinor: Long, surchargeMinor: Long, totalMinor: Long): Quote = {
     Quote(
@@ -59,7 +65,7 @@ class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(impli
       currency = merchant.currency,
       network = card.network,
       cardType = card.cardType,
-      surchargeable = surchargeable,
+      surchargeable = reason.isEmpty,
       rate = rate,
       amount = Money.fromMinor(amountMinor, exponent),
       surcharge = Money.fromMinor(surchargeMinor, exponent),
@@ -67,7 +73,8 @@ class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(impli
       currencyExponent = exponent,
       amountMinor = amountMinor,
       surchargeMinor = surchargeMinor,
-      totalMinor = totalMinor
+      totalMinor = totalMinor,
+      reason = reason
     )
   }
 }

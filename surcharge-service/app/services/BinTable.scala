@@ -12,9 +12,11 @@ class BinTable(ranges: IndexedSeq[BinRange]) {
   def size: Int = ranges.size
 
   // only the first 8 digits matter.  issuers carve narrower product ranges out of broader
-  // ones so ranges can overlap, the narrowest match wins
+  // ones so ranges can overlap, the narrowest match wins.  Callers validate with
+  // BinTable.normalize first; anything it rejects is a programming error here
   def lookup(bin: String): Option[CardInfo] = {
-    val b = BinTable.normalize(bin)
+    // the input isn't in the message, it may be a whole card number
+    val b = BinTable.normalize(bin).getOrElse(throw new IllegalArgumentException("not a valid bin"))
     ranges.filter(_.contains(b))
       .sortBy(_.width)
       .headOption
@@ -24,8 +26,16 @@ class BinTable(ranges: IndexedSeq[BinRange]) {
 
 object BinTable {
   val BinLength = 8
+  val MaxCardNumberLength = 19
 
-  def normalize(input: String): String = input.filter(_.isDigit).take(BinLength).padTo(BinLength, '0')
+  // DECISIONS.md 011: after removing spaces and dashes the input must be 8 to 19 ASCII digits, and
+  // the first 8 are the bin.  Shorter input is never zero-padded, that would guess the card type
+  def normalize(input: String): Option[String] = {
+    val digits = input.filterNot(c => c == ' ' || c == '-')
+    val valid = digits.length >= BinLength && digits.length <= MaxCardNumberLength &&
+      digits.forall(c => c >= '0' && c <= '9')
+    if (valid) Some(digits.take(BinLength)) else None
+  }
 
   // range_start,range_end,network,card_type,country with a header row
   def parse(lines: Iterator[String]): Vector[BinRange] = {

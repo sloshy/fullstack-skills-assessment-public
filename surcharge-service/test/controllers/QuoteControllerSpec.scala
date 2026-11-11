@@ -1,6 +1,6 @@
 package controllers
 
-import models.MerchantConfig
+import models.{CardInfo, MerchantConfig}
 import org.scalatestplus.play._
 import org.scalatestplus.play.guice._
 import play.api.Application
@@ -9,8 +9,10 @@ import play.api.inject.guice.GuiceApplicationBuilder
 import play.api.libs.json._
 import play.api.test.Helpers._
 import play.api.test._
-import services.MerchantDirectory
+import services.{BinTable, MerchantDirectory}
 
+import java.net.URI
+import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import scala.concurrent.{ExecutionContext, Future}
 
 class QuoteControllerSpec extends PlaySpec
@@ -50,6 +52,7 @@ class QuoteControllerSpec extends PlaySpec
       (json \ "network").as[String] mustBe "VISA"
       (json \ "cardType").as[String] mustBe "CREDIT"
       (json \ "surchargeable").as[Boolean] mustBe true
+      (json \ "reason").get mustBe JsNull
       num(json, "rate") mustBe BigDecimal(3)
       num(json, "surcharge") mustBe BigDecimal(3)
       num(json, "total") mustBe BigDecimal(103)
@@ -66,6 +69,7 @@ class QuoteControllerSpec extends PlaySpec
       Seq("currencyExponent", "amountMinor", "surchargeMinor", "totalMinor")
         .foreach(f => json(f).as[BigDecimal].isWhole mustBe true)
       json("surchargeable") mustBe a[JsBoolean]
+      json.keys must contain("reason")
     }
 
     "round an exact half up" in {
@@ -121,17 +125,54 @@ class QuoteControllerSpec extends PlaySpec
       val json = ok(quote("mer_001", BigDecimal("100.00"), "40000566"))
       (json \ "cardType").as[String] mustBe "DEBIT"
       (json \ "surchargeable").as[Boolean] mustBe false
+      (json \ "reason").as[String] mustBe "NOT_CREDIT"
       num(json, "rate") mustBe BigDecimal(0)
       num(json, "surcharge") mustBe BigDecimal(0)
       num(json, "total") mustBe BigDecimal(100)
     }
 
-    "not surcharge when the merchant has surcharging off" in {
-      val json = ok(quote("mer_004", BigDecimal("40.00"), "41111111"))
+    "not surcharge a prepaid card" in {
+      val json = ok(quote("mer_001", BigDecimal("100.00"), "48471800"))
+      (json \ "cardType").as[String] mustBe "PREPAID"
       (json \ "surchargeable").as[Boolean] mustBe false
-      num(json, "surcharge") mustBe BigDecimal(0)
-      num(json, "total") mustBe num(json, "amount")
-      (json \ "totalMinor").as[Long] mustBe 4000
+      (json \ "reason").as[String] mustBe "NOT_CREDIT"
+      (json \ "surchargeMinor").as[Long] mustBe 0
+      (json \ "totalMinor").as[Long] mustBe 10000
+    }
+
+    "not surcharge a bin that isn't in the table" in {
+      val json = ok(quote("mer_001", BigDecimal("100.00"), "63900000"))
+      (json \ "network").as[String] mustBe "UNKNOWN"
+      (json \ "cardType").as[String] mustBe "UNKNOWN"
+      (json \ "surchargeable").as[Boolean] mustBe false
+      (json \ "reason").as[String] mustBe "UNKNOWN_BIN"
+      num(json, "total") mustBe BigDecimal(100)
+    }
+
+    "not surcharge when the merchant has surcharging off, ahead of any card reason" in {
+      Seq("41111111", "40000566", "63900000").foreach { bin =>
+        val json = ok(quote("mer_004", BigDecimal("40.00"), bin))
+        (json \ "reason").as[String] mustBe "MERCHANT_OPTED_OUT"
+        (json \ "surchargeable").as[Boolean] mustBe false
+        num(json, "rate") mustBe BigDecimal(0)
+        num(json, "surcharge") mustBe BigDecimal(0)
+        num(json, "total") mustBe num(json, "amount")
+        (json \ "totalMinor").as[Long] mustBe 4000
+      }
+    }
+
+    "treat surcharging on at a 0% rate as opted out" in {
+      val zero = MerchantConfig("mer_zero", "Zero Rate", "USD", 0.0, surchargeEnabled = true)
+      val application = builder.overrides(bind[MerchantDirectory].toInstance(new StubMerchants(zero))).build()
+      running(application) {
+        val json = ok(quoteIn(application, Json.obj("merchantId" -> "mer_zero", "amount" -> 40, "bin" -> "41111111")))
+        (json \ "cardType").as[String] mustBe "CREDIT"
+        (json \ "surchargeable").as[Boolean] mustBe false
+        (json \ "reason").as[String] mustBe "MERCHANT_OPTED_OUT"
+        num(json, "rate") mustBe BigDecimal(0)
+        (json \ "surchargeMinor").as[Long] mustBe 0
+        num(json, "total") mustBe num(json, "amount")
+      }
     }
 
     "cap amounts and totals at 2^53 - 1 minor units" in {
@@ -147,16 +188,42 @@ class QuoteControllerSpec extends PlaySpec
       status(quote("mer_001", BigDecimal("90071992547409.91"), "40000566")) mustBe OK
     }
 
+    "quote a longer card number the same as its first 8 digits" in {
+      def comparable(json: JsValue) = json.as[JsObject] - "merchantId"
+      Seq(
+        ("41111111", Seq("4111111111111111", "4111 1111 1111 1111", "4111-1111-1111-1111", "4111111111111111111")),
+        ("37828224", Seq("378282246310005", "3782 822463 10005")),
+        ("55555555", Seq("5555555555554444", "5555-5555 5555-4444"))
+      ).foreach { case (bin, inputs) =>
+        val expected = ok(quote("mer_001", BigDecimal(50), bin))
+        inputs.foreach(input => comparable(ok(quote("mer_001", BigDecimal(50), input))) mustBe comparable(expected))
+      }
+    }
+
+    "reject a bin that is too short, too long or not digits" in {
+      Seq("411111", "4111111", "41111111111111111111", "4111abcd", "4111abcd11111111", "", "1234 56")
+        .foreach { bin =>
+          val result = quote("mer_001", BigDecimal(50), bin)
+          status(result) mustBe BAD_REQUEST
+          error(result) mustBe "invalid_bin"
+        }
+    }
+
+    "check the bin before the merchant" in {
+      status(quote("mer_999", BigDecimal(10), "411111")) mustBe BAD_REQUEST
+    }
+
     "return a 404 for an unknown merchant" in {
       val result = quote("mer_999", BigDecimal("10.00"), "41111111")
       status(result) mustBe NOT_FOUND
       error(result) mustBe "unknown_merchant"
     }
 
-    "reject a zero or negative amount before the merchant" in {
+    "reject a zero or negative amount before the bin and the merchant" in {
       status(quote(Json.obj("merchantId" -> "mer_001", "amount" -> 0, "bin" -> "41111111"))) mustBe UNPROCESSABLE_ENTITY
       status(quote("mer_001", BigDecimal(-5), "41111111")) mustBe UNPROCESSABLE_ENTITY
       status(quote("mer_999", BigDecimal(0), "41111111")) mustBe UNPROCESSABLE_ENTITY
+      status(quote("mer_999", BigDecimal(0), "4111")) mustBe UNPROCESSABLE_ENTITY
     }
 
     "reject a body missing fields" in {
@@ -179,6 +246,24 @@ class QuoteControllerSpec extends PlaySpec
         status(result) mustBe INTERNAL_SERVER_ERROR
       }
     }
+
+    "return a 5xx, not an UNKNOWN_BIN quote, when the bin lookup fails" in {
+      val failing = new BinTable(Vector.empty) {
+        override def lookup(bin: String): Option[CardInfo] = throw new RuntimeException("lookup failed")
+      }
+      val application = builder.overrides(bind[BinTable].toInstance(failing)).build()
+      // a real server, so the failure goes through play's error handler as it would in production
+      val server = TestServer(0, application)
+      running(server) {
+        val port = server.runningHttpPort.get
+        val request = HttpRequest.newBuilder(URI.create(s"http://localhost:$port$QuoteEndpoint"))
+          .header(CONTENT_TYPE, JSON)
+          .POST(HttpRequest.BodyPublishers.ofString("""{"merchantId":"mer_001","amount":10,"bin":"41111111"}"""))
+          .build()
+        val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString())
+        response.statusCode mustBe INTERNAL_SERVER_ERROR
+      }
+    }
   }
 
   "GET /v1/bins/:bin" should {
@@ -189,9 +274,23 @@ class QuoteControllerSpec extends PlaySpec
       (contentAsJson(result) \ "network").as[String] mustBe "MASTERCARD"
     }
 
+    "use the first 8 digits of a longer number" in {
+      val result = route(app, FakeRequest(GET, "/v1/bins/5555555555554444")).get
+      status(result) mustBe OK
+      (contentAsJson(result) \ "network").as[String] mustBe "MASTERCARD"
+    }
+
     "return a 404 for a bin that isn't in the table" in {
       val result = route(app, FakeRequest(GET, "/v1/bins/63900000")).get
       status(result) mustBe NOT_FOUND
+    }
+
+    "reject 6 or 7 digits instead of padding them" in {
+      Seq("555555", "5555555", "41111111111111111111", "4111abcd").foreach { bin =>
+        val result = route(app, FakeRequest(GET, s"/v1/bins/$bin")).get
+        status(result) mustBe BAD_REQUEST
+        error(result) mustBe "invalid_bin"
+      }
     }
   }
 }

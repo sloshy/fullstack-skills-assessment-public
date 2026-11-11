@@ -10,13 +10,13 @@ import jakarta.inject._
 class BinController @Inject()(cc: ControllerComponents, bins: BinTable) extends AbstractController(cc) {
 
   def show(bin: String): Action[AnyContent] = Action {
-    if (!bin.forall(_.isDigit) || bin.length < 6) {
-      BadRequest(Json.obj("error" -> "invalid_bin"))
-    } else {
-      bins.lookup(bin) match {
-        case Some(card) => Ok(Json.toJson(card))
-        case None => NotFound(Json.obj("error" -> "unknown_bin"))
-      }
+    BinTable.normalize(bin) match {
+      case None => BadRequest(Json.obj("error" -> "invalid_bin"))
+      case Some(b) =>
+        bins.lookup(b) match {
+          case Some(card) => Ok(Json.toJson(card))
+          case None => NotFound(Json.obj("error" -> "unknown_bin"))
+        }
     }
   }
 }
