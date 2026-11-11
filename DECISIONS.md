@@ -358,3 +358,31 @@ status check; the BFF drops that merchant's cached list on the 504. The
 list can't show a charge still running at the gateway, or one captured but
 never saved. So the warning tells the operator to wait and refresh, and
 shows the amount, last 4 and time, so they can find the entry.
+
+## 017 · 2026-11-11 · The amount field never changes what the operator typed
+
+**Context:** In the integration click-through, antd's `InputNumber` (with
+`precision` set from the currency) rewrote invalid input when the field
+lost focus. For JPY, `5.5` became `6`. For USD, `10.005` became `10.01`,
+and `5fdfsd` became `5.00`. The USD behaviour was already there (the
+original field used `precision={2}` for every currency). The JPY rounding
+was **introduced by our own Phase 2 commit `a3c597e`**: before it, ¥5.5
+reached the server and got a 422; setting the precision to 0 turned that
+into a silent round-up. So this is a fix to our own work, and it closes the
+pre-existing USD variant in the same field. Rule 4 still held, because the terminal quotes
+and charges the rewritten value, but the customer could be charged an
+amount nobody typed.
+**Options:**
+- **(A)** Show a validation error and never rewrite the value.
+- **(B)** Block invalid keystrokes.
+- **(C)** Keep the rounding but say so.
+
+**Decision:** (A). The amount is a text field (`inputMode='decimal'`), and
+its value stays exactly as typed. It must be a plain decimal number with at
+most the currency's decimal places (0 for JPY, 2 for USD) and above 0.
+Anything else (letters, too many decimals, several points, a negative)
+shows a field error such as "Enter whole yen, like 1234" or "Enter an
+amount with up to 2 decimal places", and no quote is made or charged until
+it's fixed.
+**Why:** A money field must never silently change an amount. The usual
+practice is to refuse or flag invalid input, not correct it.

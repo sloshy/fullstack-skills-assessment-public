@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Alert, App, Button, Card, Col, Form, Input, InputNumber, Row, Typography } from 'antd'
+import { Alert, App, Button, Card, Col, Form, Input, Row, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { Link, useNavigate } from 'react-router-dom'
 import { errorMessage } from '../api/client'
@@ -10,12 +10,13 @@ import { isChargeable, isFallback, quoteInput, surchargeLabel } from '../payment
 import { useSurchargeQuote } from '../payments/useSurchargeQuote'
 import { classifyWriteError } from '../payments/writeErrors'
 import { binOf, digitsOnly, formatCardNumber, isValidCardNumber, parseExpiry } from '../utils/card'
-import { formatMinorWithExponent, formatMoney, fractionDigits } from '../utils/money'
+import { formatMinorWithExponent, formatMoney, fractionDigits, parseAmount } from '../utils/money'
 
 const { Text } = Typography
 
 type PaymentForm_Shape = {
-  amount: number
+  /** The amount exactly as typed; `parseAmount` reads it (DECISIONS.md 017). */
+  amount: string
   cardNumber: string
   expiry: string
   cvv: string
@@ -48,11 +49,16 @@ export const NewPaymentPage = () => {
   // State updates land a render later, so a fast second submit could still see submitting=false
   const inFlight = useRef(false)
 
-  const amount = Form.useWatch('amount', form)
+  const digits = fractionDigits(merchant.currency)
+  const readAmount = (text: string | undefined) => parseAmount(text ?? '', digits, merchant.currency)
+
+  const amountText = Form.useWatch('amount', form)
+  const parsedAmount = readAmount(amountText)
+  // DECISIONS.md 017: an invalid amount is never quoted; the field shows what's wrong with it
+  const amount = parsedAmount.ok ? parsedAmount.amount : undefined
   const cardNumber = Form.useWatch('cardNumber', form)
   const { view, latestQuote, requote } = useSurchargeQuote(amount, cardNumber)
 
-  const digits = fractionDigits(merchant.currency)
   const bin = binOf(cardNumber ?? '')
   // A fallback quote never looked the card up, so it has nothing to say about it
   const cardQuote = latestQuote && latestQuote.bin === bin && !isFallback(latestQuote) ? latestQuote : undefined
@@ -64,7 +70,12 @@ export const NewPaymentPage = () => {
   const onFinish = async (values: PaymentForm_Shape) => {
     // rule 4: charge exactly the quote on screen, and only while it's still good
     if (inFlight.current || blockedByUnknown) return
-    if (view.kind !== 'ready' || !isChargeable(view, quoteInput(values.amount, values.cardNumber), Date.now())) {
+    const parsed = readAmount(values.amount)
+    // Narrows the amount text to a number. It can't fail here: the field's validator blocks
+    // submit for an invalid amount, so onFinish never runs with one.
+    if (!parsed.ok) return
+    const chargeAmount = parsed.amount
+    if (view.kind !== 'ready' || !isChargeable(view, quoteInput(chargeAmount, values.cardNumber), Date.now())) {
       setError('The total is out of date. Wait for it to update, then charge again.')
       requote()
       return
@@ -80,7 +91,7 @@ export const NewPaymentPage = () => {
 
     try {
       const payment = await createPayment({
-        amount: values.amount,
+        amount: chargeAmount,
         cardNumber: cardDigits,
         expiryMonth: expiry.month,
         expiryYear: expiry.year,
@@ -102,7 +113,7 @@ export const NewPaymentPage = () => {
           total: quoteMoney(quote, quote.totalMinor),
           last4: cardDigits.slice(-4),
           at: new Date(),
-          values: attemptValues(values.amount, values.cardNumber),
+          values: attemptValues(chargeAmount, values.cardNumber),
         })
       } else {
         if (failure.kind === 'requote') requote()
@@ -151,18 +162,24 @@ export const NewPaymentPage = () => {
             <Form.Item
               label={`Amount (${merchant.currency})`}
               name='amount'
-              rules={[{ required: true, message: 'Enter an amount' }]}
+              rules={[
+                { required: true, message: 'Enter an amount' },
+                {
+                  validator: (_, value: string | undefined) => {
+                    if (!value) return Promise.resolve()
+                    const parsed = readAmount(value)
+                    return parsed.ok ? Promise.resolve() : Promise.reject(new Error(parsed.error))
+                  },
+                },
+              ]}
+              // A fallback for an amount the server refuses (a 422) that passed the check here
               {...(view.kind === 'invalid-amount' && {
                 validateStatus: 'error',
                 help: `That isn't a valid ${merchant.currency} amount`,
               })}
             >
-              <InputNumber
-                min={10 ** -digits}
-                precision={digits}
-                style={{ width: '100%' }}
-                placeholder={(0).toFixed(digits)}
-              />
+              {/* DECISIONS.md 017: plain text, so the value is never rounded or rewritten on blur */}
+              <Input inputMode='decimal' autoComplete='off' placeholder={(0).toFixed(digits)} />
             </Form.Item>
 
             <Form.Item
@@ -257,10 +274,20 @@ export const NewPaymentPage = () => {
                 <dt className='summary-total'>Total</dt>
                 <dd className='summary-total'>{quoteMoney(view.quote, view.quote.totalMinor)}</dd>
               </dl>
-            : <dl className='summary'>
-                <dt>Amount</dt>
-                <dd>{formatMoney(amount ?? 0, merchant.currency)}</dd>
-              </dl>
+            : amount === undefined
+              // DECISIONS.md 017: no made-up figure for an amount that can't be read
+              ? <dl className='summary'>
+                  <dt>Amount</dt>
+                  <dd>—</dd>
+                  <dt>Surcharge</dt>
+                  <dd>—</dd>
+                  <dt className='summary-total'>Total</dt>
+                  <dd className='summary-total'>—</dd>
+                </dl>
+              : <dl className='summary'>
+                  <dt>Amount</dt>
+                  <dd>{formatMoney(amount, merchant.currency)}</dd>
+                </dl>
           }
           {note && <Text id='summary-note' type='secondary' style={{ display: 'block', marginTop: 12 }}>{note}</Text>}
         </Card>
