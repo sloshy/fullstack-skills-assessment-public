@@ -9,11 +9,13 @@ const formatter = (currency: string) => {
 
 export const formatMoney = (amount: number, currency: string) => formatter(currency).format(amount)
 
-// gateway amounts come back in minor units (cents)
-export const formatMinorUnits = (minor: number, currency: string) => {
-  const digits = formatter(currency).resolvedOptions().maximumFractionDigits ?? 2
-  return formatMoney(minor / 10 ** digits, currency)
-}
+/** The currency's decimal places according to Intl: 2 for USD, 0 for JPY. */
+export const fractionDigits = (currency: string) =>
+  formatter(currency).resolvedOptions().maximumFractionDigits ?? 2
+
+/** Formats minor units (gateway amounts) with the currency's Intl decimal places. */
+export const formatMinorUnits = (minor: number, currency: string) =>
+  formatMoney(minor / 10 ** fractionDigits(currency), currency)
 
 /** Formats minor units with an explicit exponent, such as a quote's `currencyExponent`. */
 export const formatMinorWithExponent = (minor: number, exponent: number, currency: string) =>

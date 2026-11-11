@@ -10,7 +10,7 @@ import { isChargeable, isFallback, quoteInput, surchargeLabel } from '../payment
 import { useSurchargeQuote } from '../payments/useSurchargeQuote'
 import { classifyWriteError } from '../payments/writeErrors'
 import { binOf, digitsOnly, formatCardNumber, isValidCardNumber, parseExpiry } from '../utils/card'
-import { formatMinorWithExponent, formatMoney } from '../utils/money'
+import { formatMinorWithExponent, formatMoney, fractionDigits } from '../utils/money'
 
 const { Text } = Typography
 
@@ -52,6 +52,7 @@ export const NewPaymentPage = () => {
   const cardNumber = Form.useWatch('cardNumber', form)
   const { view, latestQuote, requote } = useSurchargeQuote(amount, cardNumber)
 
+  const digits = fractionDigits(merchant.currency)
   const bin = binOf(cardNumber ?? '')
   // A fallback quote never looked the card up, so it has nothing to say about it
   const cardQuote = latestQuote && latestQuote.bin === bin && !isFallback(latestQuote) ? latestQuote : undefined
@@ -156,7 +157,12 @@ export const NewPaymentPage = () => {
                 help: `That isn't a valid ${merchant.currency} amount`,
               })}
             >
-              <InputNumber min={0.01} precision={2} style={{ width: '100%' }} placeholder='0.00' />
+              <InputNumber
+                min={10 ** -digits}
+                precision={digits}
+                style={{ width: '100%' }}
+                placeholder={(0).toFixed(digits)}
+              />
             </Form.Item>
 
             <Form.Item

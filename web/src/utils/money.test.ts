@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { formatMinorUnits, formatMinorWithExponent, formatMoney, toMinorUnitsWithExponent } from './money'
+import { formatMinorUnits, formatMinorWithExponent, formatMoney, fractionDigits, toMinorUnitsWithExponent } from './money'
 
 describe('formatMoney', () => {
   test('formats in the given currency', () => {
@@ -10,6 +10,10 @@ describe('formatMoney', () => {
 describe('formatMinorUnits', () => {
   test('cents to dollars', () => {
     expect(formatMinorUnits(10300, 'USD')).toBe('$103.00')
+  })
+
+  test('yen have no minor unit', () => {
+    expect(formatMinorUnits(1234, 'JPY')).toBe('¥1,234')
   })
 })
 
@@ -35,5 +39,12 @@ describe('toMinorUnitsWithExponent', () => {
   test('exponent notation falls back to multiplying', () => {
     expect(toMinorUnitsWithExponent(1e21, 2)).toBe(1e23)
     expect(toMinorUnitsWithExponent(1e-7, 2)).toBe(0)
+  })
+})
+
+describe('fractionDigits', () => {
+  test('USD has 2, JPY has 0', () => {
+    expect(fractionDigits('USD')).toBe(2)
+    expect(fractionDigits('JPY')).toBe(0)
   })
 })
