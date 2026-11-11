@@ -8,7 +8,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import jakarta.inject._
 
-// the fields a quote signature covers, in canonical-string order (docs/quote-contract.md, "Signature")
+/** The fields a quote signature covers, in canonical-string order (docs/quote-contract.md, "Signature"). */
 case class SignedQuoteFields(keyId: String,
                              merchantId: String,
                              currency: String,
@@ -25,17 +25,20 @@ object QuoteSigning {
   val Version = "v1"
   val Algorithm = "HmacSHA256"
   val MinKeyBytes = 32
-  // how long a quote stays valid after it's issued, in seconds
+  /** How long a quote stays valid after it's issued, in seconds. */
   val TtlSeconds = 300L
 
   private val Token = "[A-Za-z0-9_-]+".r
   private val Bin = "[0-9]{8}".r
 
-  // whether a value can be signed as a merchant id, currency, key id, network or card type
+  /** Whether a value can be signed as a merchant id, currency, key id, network or card type. */
   def isToken(value: String): Boolean = Token.matches(value)
 
-  // v1|{keyId}|{merchantId}|{currency}|{bin}|{network}|{cardType}|{amountMinor}|{surchargeMinor}|{totalMinor}|{expiresAt}
-  // fields are checked so that no value can contain the separator or be read two ways
+  /** The canonical string a signature covers:
+    * `v1|{keyId}|{merchantId}|{currency}|{bin}|{network}|{cardType}|{amountMinor}|{surchargeMinor}|{totalMinor}|{expiresAt}`.
+    *
+    * Fields are checked so that no value can contain the separator or be read two ways.
+    */
   def canonical(f: SignedQuoteFields): String = {
     def token(name: String, value: String): String = {
       require(isToken(value), s"$name is not [A-Za-z0-9_-]+")
@@ -62,7 +65,7 @@ object QuoteSigning {
     ).mkString("|")
   }
 
-  // HMAC-SHA256 over the UTF-8 bytes of message, base64url without padding
+  /** HMAC-SHA256 over the UTF-8 bytes of `message`, base64url without padding. */
   def hmac(key: Array[Byte], message: String): String = {
     val mac = Mac.getInstance(Algorithm)
     mac.init(new SecretKeySpec(key, Algorithm))
@@ -70,8 +73,10 @@ object QuoteSigning {
   }
 }
 
-// signs quotes with the key from surcharge.quoteSigning (QUOTE_SIGNING_KEY / QUOTE_SIGNING_KEY_ID).
-// Bound as an eager singleton so a bad key stops the service at startup, not on the first quote
+/** Signs quotes with the key from `surcharge.quoteSigning` (`QUOTE_SIGNING_KEY` / `QUOTE_SIGNING_KEY_ID`).
+  *
+  * Bound as an eager singleton so a bad key stops the service at startup, not on the first quote.
+  */
 @Singleton
 class QuoteSigner @Inject()(config: Configuration) extends com.typesafe.scalalogging.LazyLogging {
 
@@ -96,6 +101,9 @@ class QuoteSigner @Inject()(config: Configuration) extends com.typesafe.scalalog
       "Set QUOTE_SIGNING_KEY_ID as well.")
   }
 
-  // throws IllegalArgumentException if a field can't be signed unambiguously
+  /** The signature for a quote's fields.
+    *
+    * @throws IllegalArgumentException if a field can't be signed unambiguously
+    */
   def sign(fields: SignedQuoteFields): String = QuoteSigning.hmac(key, QuoteSigning.canonical(fields))
 }

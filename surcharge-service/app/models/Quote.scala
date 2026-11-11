@@ -7,8 +7,9 @@ case class QuoteRequest(merchantId: String, amount: BigDecimal, bin: String)
 
 object QuoteRequest {
 
-  // amount is read straight from the JSON number into a BigDecimal, never through a Double.  Only
-  // a JSON number is accepted (play's own BigDecimal reads would also take a string)
+  /** Reads `amount` straight from the JSON number into a BigDecimal, never through a Double.
+    * Only a JSON number is accepted (play's own BigDecimal reads would also take a string).
+    */
   private val AmountReads: Reads[BigDecimal] = Reads {
     case JsNumber(n) => JsSuccess(n)
     case _ => JsError("error.expected.jsnumber")
@@ -21,7 +22,7 @@ object QuoteRequest {
     )(QuoteRequest.apply _)
 }
 
-// why a quote carries no surcharge (docs/quote-contract.md, "Reason codes")
+/** Why a quote carries no surcharge (docs/quote-contract.md, "Reason codes"). */
 sealed abstract class QuoteReason(val code: String)
 
 object QuoteReason {
@@ -32,7 +33,9 @@ object QuoteReason {
   implicit val QuoteReasonWrites: Writes[QuoteReason] = Writes(r => JsString(r.code))
 }
 
-// amount, surcharge and total are exact decimals derived from the minor-unit fields
+/** A surcharge quote. `amount`, `surcharge` and `total` are exact decimals derived from the
+  * minor-unit fields.
+  */
 case class Quote(merchantId: String,
                  currency: String,
                  network: String,
@@ -53,7 +56,7 @@ case class Quote(merchantId: String,
                  signature: String)
 
 object Quote {
-  // reason is written as null when surcharged, not left out
+  /** Writes `reason` as null when surcharged, rather than leaving it out. */
   implicit val QuoteWrites: OWrites[Quote] =
     Json.configured(JsonConfiguration(optionHandlers = OptionHandlers.WritesNull)).writes[Quote]
 }
@@ -63,6 +66,6 @@ object QuoteError {
   case object UnknownMerchant extends QuoteError
   case object InvalidAmount extends QuoteError
   case object InvalidBin extends QuoteError
-  // the merchant's currency has no known exponent, a configuration fault
+  /** The merchant's currency has no known exponent, a configuration fault. */
   case class UnsupportedCurrency(currency: String) extends QuoteError
 }

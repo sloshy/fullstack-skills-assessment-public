@@ -11,9 +11,12 @@ class BinTable(ranges: IndexedSeq[BinRange]) {
 
   def size: Int = ranges.size
 
-  // only the first 8 digits matter.  issuers carve narrower product ranges out of broader
-  // ones so ranges can overlap, the narrowest match wins.  Callers validate with
-  // BinTable.normalize first; anything it rejects is a programming error here
+  /** The card info for a bin. Only the first 8 digits matter. Issuers carve narrower product
+    * ranges out of broader ones so ranges can overlap; the narrowest match wins.
+    *
+    * Callers validate with `BinTable.normalize` first; anything it rejects is a programming
+    * error here.
+    */
   def lookup(bin: String): Option[CardInfo] = {
     // the input isn't in the message, it may be a whole card number
     val b = BinTable.normalize(bin).getOrElse(throw new IllegalArgumentException("not a valid bin"))
@@ -28,18 +31,20 @@ object BinTable {
   val BinLength = 8
   val MaxCardNumberLength = 19
 
-  // DECISIONS.md 011: after removing spaces and dashes the input must be 8 to 19 ASCII digits, and
-  // the first 8 are the bin.  Shorter input is never zero-padded, that would guess the card type
+  /** The bin from a bin or card number, or None if the input isn't one. After removing spaces and
+    * dashes the input must be 8 to 19 ASCII digits, and the first 8 are the bin (DECISIONS.md 011).
+    */
   def normalize(input: String): Option[String] = {
     val digits = input.filterNot(c => c == ' ' || c == '-')
+    // DECISIONS.md 011: shorter input is never zero-padded, that would guess the card type
     val valid = digits.length >= BinLength && digits.length <= MaxCardNumberLength &&
       digits.forall(c => c >= '0' && c <= '9')
     if (valid) Some(digits.take(BinLength)) else None
   }
 
-  // range_start,range_end,network,card_type,country with a header row.  network and card_type
-  // end up in signed quotes, so a value that can't be signed fails the load (at startup, the
-  // provider is eager) rather than surfacing later as a 500 on every quote for that range
+  /** Parses bin table CSV lines, `range_start,range_end,network,card_type,country`, with a
+    * header row.
+    */
   def parse(lines: Iterator[String]): Vector[BinRange] = {
     lines.zipWithIndex.drop(1)
       .filter(_._1.nonEmpty)
@@ -47,6 +52,9 @@ object BinTable {
         val cols = line.split(',')
         val network = cols(2).trim
         val cardType = cols(3).trim
+        // network and card_type end up in signed quotes, so a value that can't be signed fails the
+        // load (at startup, the provider is eager) rather than surfacing later as a 500 on every
+        // quote for that range
         Seq("network" -> network, "card_type" -> cardType).foreach { case (name, value) =>
           if (!QuoteSigning.isToken(value))
             throw new IllegalStateException(s"bin table line ${index + 1}: $name '$value' is not [A-Za-z0-9_-]+")

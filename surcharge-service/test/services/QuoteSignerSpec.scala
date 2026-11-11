@@ -5,9 +5,11 @@ import play.api.Configuration
 
 class QuoteSignerSpec extends PlaySpec {
 
-  // the test vector from docs/quote-contract.md
+  /** The test vector's key (docs/quote-contract.md). */
   val VectorKey = "test-only-quote-signing-key-0123456789abcdef"
+  /** The test vector's canonical string (docs/quote-contract.md). */
   val VectorString = "v1|test-1|mer_002|USD|41111111|VISA|CREDIT|18500|463|18963|1767225600"
+  /** The test vector's signature (docs/quote-contract.md). */
   val VectorSignature = "_eheNpSMYu68PGi9lBWW-VqEwKqvc2MkL8Sijse2LBU"
 
   val vectorFields = SignedQuoteFields(

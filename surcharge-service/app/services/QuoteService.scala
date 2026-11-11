@@ -12,8 +12,9 @@ class QuoteService @Inject()(merchants: MerchantDirectory,
                              signer: QuoteSigner,
                              clock: Clock)(implicit ec: ExecutionContext) {
 
-  // checks run in the order docs/quote-contract.md lists them: amount > 0, bin, merchant, then
-  // the amount against the merchant's currency
+  /** Quotes a request. Checks run in the order docs/quote-contract.md lists them: amount > 0, bin,
+    * merchant, then the amount against the merchant's currency.
+    */
   def quote(request: QuoteRequest): Future[Either[QuoteError, Quote]] = {
     if (request.amount <= 0) {
       Future.successful(Left(QuoteError.InvalidAmount))
@@ -49,14 +50,17 @@ class QuoteService @Inject()(merchants: MerchantDirectory,
     }
   }
 
-  // (surchargeMinor, totalMinor), or None when the total would pass Money.MaxMinor.  Only this
-  // arithmetic maps to a 422; an ArithmeticException anywhere else stays a 5xx
+  /** The surcharge and total in minor units for an amount at a rate.
+    *
+    * @return `(surchargeMinor, totalMinor)`, or None when the total would pass `Money.MaxMinor`
+    */
   private def totals(amountMinor: Long, rate: BigDecimal, surchargeable: Boolean): Option[(Long, Long)] = {
     try {
       val surchargeMinor = if (surchargeable) SurchargeCalculator.surchargeMinor(amountMinor, rate) else 0L
       val totalMinor = Math.addExact(amountMinor, surchargeMinor)
       if (totalMinor <= Money.MaxMinor) Some((surchargeMinor, totalMinor)) else None
     } catch {
+      // only this arithmetic maps to a 422; an ArithmeticException anywhere else stays a 5xx
       case _: ArithmeticException => None
     }
   }

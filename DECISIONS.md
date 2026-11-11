@@ -313,3 +313,22 @@ serves every terminal.
 - With several BFF replicas behind a load balancer, exiting on both would
   also be reasonable. This system runs one instance, so a restart is an
   outage for every terminal.
+
+## 015 · 2026-11-11 · Doc comments for declarations; plain comments for decisions and surprises
+
+**Context:** The original code uses plain `//` comments throughout, including
+to describe values and functions. The Phase 1 code copied that style. It
+has about 145 plain comment lines and no doc comments.
+**Decision:**
+- When a comment describes **what a declaration is or does** (a type,
+  value, function, field or config key), it's a doc comment: Scaladoc
+  `/** … */` in Scala, TSDoc/JSDoc `/** … */` in TypeScript. That way it
+  shows in IDE hovers and generated docs.
+- Plain `//` comments are for **why**: a specific decision, a non-obvious
+  constraint, or surprising behaviour at that point in the code, ideally
+  citing the rule or decision (e.g. `// rule 2: if in doubt, don't`).
+- **Scope:** code we write or change. Pre-existing comments in code we
+  don't otherwise touch are left alone, to avoid churn in the diff.
+**Why:** Doc comments stay attached to the API they describe. A reviewer
+can then tell "this is what it is" apart from "this is why it's done this
+unusual way", which is the part that needs scrutiny.

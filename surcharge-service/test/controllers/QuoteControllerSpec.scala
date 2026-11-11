@@ -21,8 +21,9 @@ class QuoteControllerSpec extends PlaySpec
 
   val QuoteEndpoint = "/v1/quotes"
 
-  // the test vector's key and expiry from docs/quote-contract.md
+  /** The test vector's signing key (docs/quote-contract.md). */
   val TestKey = "test-only-quote-signing-key-0123456789abcdef"
+  /** The fixed clock time, so quotes get the test vector's expiry (docs/quote-contract.md). */
   val IssuedAt = 1767225300L
 
   def builder: GuiceApplicationBuilder = new GuiceApplicationBuilder()
@@ -39,7 +40,9 @@ class QuoteControllerSpec extends PlaySpec
   def quote(merchantId: String, amount: BigDecimal, bin: String) =
     quoteIn(app, Json.obj("merchantId" -> merchantId, "amount" -> amount, "bin" -> bin))
 
-  // the amount exactly as written in the request text, so nothing re-encodes it on the way
+  /** Posts the request text as is, so the amount arrives exactly as written and nothing
+    * re-encodes it on the way.
+    */
   def quoteRaw(text: String) =
     route(app, FakeRequest(POST, QuoteEndpoint).withHeaders(CONTENT_TYPE -> JSON).withBody(text)).get
 
@@ -315,7 +318,7 @@ class QuoteControllerSpec extends PlaySpec
   }
 }
 
-// a merchant directory that knows one merchant, for configuration faults the fixture doesn't have
+/** A merchant directory that knows one merchant, for configuration faults the fixture doesn't have. */
 class StubMerchants(merchant: MerchantConfig)
   extends MerchantDirectory(null)(ExecutionContext.global) {
   override def find(merchantId: String): Future[Option[MerchantConfig]] =
