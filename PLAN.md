@@ -139,20 +139,45 @@ file.
     decimals.
 
 ### Phase 2: web terminal (after 1A and 1B)
-- A debounced quote for the real amount and BIN. Show the server's
-  surcharge, total and whether it applies; remove `previewSurcharge`.
-- While the BIN has fewer than 8 digits, show no surcharge yet ("enter card
-  number"). On a fallback, show "Surcharge unavailable, no surcharge will
-  be applied".
-- Charge is disabled until the displayed quote matches the current amount
-  and BIN, so a stale quote can't be submitted.
-- Re-quote before `expiresAt`, and disable Charge once a quote has
-  expired.
-- Send the signed quote (or explicit no-surcharge) as `quote` in the
-  `POST /payments` body. Use JPY-aware amount input and formatting.
-- Stop the client retrying non-idempotent POSTs (`web/src/api/client.ts`).
-  This is a .NET Task 2 concern; noted, with the full fix described in
-  `NOTES.md`.
+Decisions: the receipt mismatch warning (yes), the 504 handling
+(`DECISIONS.md` 016, link only, pending expert confirmation), testing
+(pure-logic Vitest, no new dependencies) and an automatic re-quote before
+expiry. One commit per sub-task (013), in this order:
+1. **Safe writes in the client** (`web/src/api/client.ts`):
+   - `POST /payments` and refunds don't auto-retry, and their client
+     timeout is about 35 s, above the BFF's 30 s write timeout. Reads keep
+     their retries.
+   - `504 payment_outcome_unknown` gets a distinct warning: "We couldn't
+     confirm whether this payment went through. Check the payments list
+     before charging again", with a link to the list. The form stays
+     filled in, with no retry button (016). Refunds get the same handling.
+2. **The quote drives what the customer sees** (Task 1 terminal side,
+   Task 3 "shows the customer the right thing"):
+   - Quote the real amount and BIN once both are valid, debounced to about
+     300 ms, ignoring responses that arrive after the amount or card has
+     changed.
+   - The summary shows the quote's surcharge and total, formatted from
+     its minor-unit fields, with a label taken from its rate and reason.
+   - Charge is enabled only for a quote that matches the current amount
+     and BIN and hasn't expired. The terminal re-quotes automatically
+     about 30 s before `expiresAt`. The button shows the quote's total.
+   - The other states: before 8 digits, quoting, the fallback ("Surcharge
+     unavailable. No surcharge will be applied", Charge on per 008), a 422
+     field error, and a 401/502 error with Charge off.
+   - Send the displayed quote unchanged as `quote` in `POST /payments`.
+     Remove `previewSurcharge` and the merchant-rate label.
+3. **JPY-aware amount input:** the amount input's decimal places come from
+   the currency's own digits via `Intl` (0 for JPY, 2 for USD), and the
+   placeholder follows.
+4. **Receipt mismatch warning:** the payment detail page warns when the
+   gateway's captured amount differs from the receipt total, so INC-4478
+   is visible to operators until the C# fix lands.
+- **Tests:** the quote logic in a small pure module (state, staleness,
+  expiry, labels), tested with Vitest, plus the client's retry and
+  timeout policy with a stubbed `fetch`. The full flow is checked by hand
+  in the integration run.
+- **Conventions:** comments per `DECISIONS.md` 015; the web's existing
+  ESLint and `tsc` pass; nothing outside `web/` changes.
 
 ### Phase 3 (bonus, first to cut): Scala Task 2, latency, in its own worktree
 - Measure after each change, one at a time: cache the merchant lookup

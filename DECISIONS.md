@@ -332,3 +332,29 @@ has about 145 plain comment lines and no doc comments.
 **Why:** Doc comments stay attached to the API they describe. A reviewer
 can then tell "this is what it is" apart from "this is why it's done this
 unusual way", which is the part that needs scrutiny.
+
+## 016 · 2026-11-11 · Unknown payment outcome: link to the payments list, no "charge again" (pending expert confirmation)
+
+**Context:** The BFF returns `504 payment_outcome_unknown` when a payment
+write may have reached the payments API but no usable answer came back
+(014). The terminal needs to show the operator something. The payments API
+has no idempotency key and no lookup by our reference, although the
+gateway already supports idempotency keys (`IPaymentGateway.cs`).
+**Options:**
+- **(A)** Warn and link to the payments list, with no retry button.
+- **(B)** Offer "charge again" behind a confirmation.
+- **(C)** Offer a retry that reuses the same idempotency key.
+
+**Decision:** (A) for Phase 2. (C) is the intended long-term fix (Task 7
+#3), and (B) is rejected. This is **pending confirmation from a payments
+domain expert**. The brief for them covers the industry patterns
+(idempotency-key retries, a status check before retrying, automatic
+timeout reversal), our gaps and their open questions; it's kept outside the
+repo as a shared doc.
+**Why:** Every established pattern exists to prevent a second
+independent charge after an unknown outcome. Without a key, "charge again"
+is exactly that. Checking the payments list is the manual equivalent of a
+status check; the BFF drops that merchant's cached list on the 504. The
+list can't show a charge still running at the gateway, or one captured but
+never saved. So the warning tells the operator to wait and refresh, and
+shows the amount, last 4 and time, so they can find the entry.
