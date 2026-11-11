@@ -24,12 +24,16 @@ const randomBin = () =>
     ? knownBins[Math.floor(Math.random() * knownBins.length)]
     : String(40000000 + Math.floor(Math.random() * 20000000))
 
-const body = () =>
-  JSON.stringify({
-    merchantId: merchants[Math.floor(Math.random() * merchants.length)],
-    amount: Math.round((5 + Math.random() * 500) * 100) / 100,
-    bin: randomBin(),
-  })
+// mer_003 is JPY, which has no minor unit: send whole yen, or the service rejects the amount (422)
+const randomAmount = (merchantId) => {
+  const amount = 5 + Math.random() * 500
+  return merchantId === "mer_003" ? Math.round(amount) : Math.round(amount * 100) / 100
+}
+
+const body = () => {
+  const merchantId = merchants[Math.floor(Math.random() * merchants.length)]
+  return JSON.stringify({ merchantId, amount: randomAmount(merchantId), bin: randomBin() })
+}
 
 const latencies = []
 let errors = 0

@@ -28,6 +28,9 @@ formatting (`185` vs `185.00`) aren't part of the contract.
   and `10.000` USD are valid; `100.5` JPY and `10.001` USD aren't.
 - **Minor units:** `amountMinor` is that integer (`$185.00` is `18500`,
   `¥1234` is `1234`).
+- **Upper bound:** `amountMinor` and `totalMinor` must not exceed
+  `2^53 − 1` (9007199254740991), so JavaScript consumers never see an
+  unsafe integer. A larger amount gets `422 invalid_amount`.
 - **Rate:** the merchant's `surchargeRate` (a percent) is read with Scala's
   `BigDecimal(d)`, which uses `Double.toString`. It never uses
   `new java.math.BigDecimal(double)`.
@@ -279,6 +282,8 @@ change to an existing response:
 | JPY amount with decimals, USD with more than 2 | `200`, surcharge at 2 decimals | `422 invalid_amount` |
 | Prepaid card, or a BIN not in the table | `200`, surcharged | `200`, not surcharged (rules 1, 2) |
 | An exact half-cent surcharge | rounded half-even | rounded half-up (rule 3) |
+| Merchant whose currency has no known exponent | `200`, priced at 2 decimals | `500 internal_error`, logged as a config fault |
+| Amount above `2^53 − 1` minor units | `200` | `422 invalid_amount` |
 | BFF quote when `getMerchant` gets a payments API `5xx` | that status passed through (`UpstreamError`) | `502 upstream_error` |
 
 - **Effect on the payments API:** it accepts JPY amounts with decimals

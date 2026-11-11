@@ -23,6 +23,9 @@ class QuoteController @Inject()(cc: ControllerComponents, quotes: QuoteService)(
             Ok(Json.toJson(quote))
           case Left(QuoteError.UnknownMerchant) => NotFound(Json.obj("error" -> "unknown_merchant"))
           case Left(QuoteError.InvalidAmount) => UnprocessableEntity(Json.obj("error" -> "invalid_amount"))
+          case Left(QuoteError.UnsupportedCurrency(currency)) =>
+            logger.error(s"mid:${q.merchantId} has currency $currency with no known exponent, a merchant config fault")
+            InternalServerError(Json.obj("error" -> "internal_error"))
         }
     }
   }
