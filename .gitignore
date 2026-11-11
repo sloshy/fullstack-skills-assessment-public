@@ -1,2 +1,9 @@
 .DS_Store
 node_modules/
+
+# Local editor / AI tooling
+.metals/
+.bloop/
+.bsp/
+**/project/metals.sbt
+.claude/settings.local.json
