@@ -251,3 +251,42 @@ each change and the reasoning behind it.
 
 **Why:** Each commit can be explained, reviewed and reverted on its own,
 and the history tells the story task by task, not just phase by phase.
+
+## 014 · 2026-11-11 · BFF timeouts, unknown payment outcomes, last-resort error handling
+
+**Context:** Task 5 added timeouts to the BFF's upstream calls. A single
+3 s timeout on every payments API call turned the slow test card (about
+5 s in the gateway) into a terminal error for a charge that actually
+succeeded, because the payments API doesn't cancel the charge. The web
+client then retried it into duplicate charges. INC-4493 also showed what
+happens when an error escapes: Node exits, and the one shared process
+serves every terminal.
+**Decision:**
+- **Timeouts:** reads (lists, payment detail, merchant lookup) wait 3 s
+  (`PAYMENTS_API_TIMEOUT_MS`) and fail with `502 upstream_error`, which is
+  safe to retry. Writes (create, refund) wait 30 s
+  (`PAYMENTS_API_WRITE_TIMEOUT_MS`).
+- **A write whose outcome is unknown** gets `504 payment_outcome_unknown`
+  and clears that merchant's cached list. That covers a timeout, a
+  connection lost after the request may have been sent, a `2xx` with an
+  unreadable body, or a proxy's non-JSON `502`/`503`/`504`. A write that
+  can't have been sent (an error while connecting or resolving DNS) is a
+  `502`. The terminal must treat the 504 as "check the payments list
+  before charging again", never as a retry. The real fix for duplicates
+  is an idempotency key (Task 7 #3).
+- **Last-resort error handling:**
+  - An *unhandled promise rejection* is logged at ERROR
+    (`event: "unhandled_rejection"`, alertable), and the BFF keeps
+    running.
+  - An *uncaught exception* triggers a graceful shutdown and exit
+    (forced after 10 s), and Docker restarts it.
+
+**Why:**
+- A 502 says "try again". That's wrong for a payment that may have gone
+  through.
+- After a rejection the process is healthy, and exiting would recreate
+  INC-4493 from a single forgotten wrapper. After an uncaught exception
+  its state may be corrupt.
+- With several BFF replicas behind a load balancer, exiting on both would
+  also be reasonable. This system runs one instance, so a restart is an
+  outage for every terminal.

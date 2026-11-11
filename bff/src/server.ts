@@ -1,5 +1,6 @@
 import app from './app';
 import { config } from './config';
+import { installProcessGuards } from './processGuards';
 
 const server = app.listen(config.port, () => {
   console.log(`Terminal BFF listening on port ${config.port}`);
@@ -7,10 +8,5 @@ const server = app.listen(config.port, () => {
   console.log(`Surcharge service: ${config.surchargeServiceUrl}`);
 });
 
-const shutdown = () => {
-  console.log('Shutting down...');
-  server.close(() => process.exit(0));
-};
-
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+// SIGTERM/SIGINT (graceful, with a forced exit), uncaughtException and unhandledRejection
+installProcessGuards(server);

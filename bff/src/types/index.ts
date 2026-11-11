@@ -11,20 +11,39 @@ export interface Merchant {
   surchargeRate: number; // percent, 3 = 3%
 }
 
+// POST /v1/quotes 200 response, docs/quote-contract.md. The service may add fields; the BFF
+// passes those through untouched (a spread), so this lists only what it checks.
 export interface SurchargeServiceQuote {
   merchantId: string;
   currency: string;
-  network: string;
-  cardType: string;
+  network: string; // VISA | MASTERCARD | AMEX | DISCOVER | UNKNOWN, not checked by the BFF
+  cardType: string; // CREDIT | DEBIT | PREPAID | UNKNOWN, not checked by the BFF
   surchargeable: boolean;
   rate: number;
   amount: number;
   surcharge: number;
   total: number;
+  currencyExponent: number;
+  amountMinor: number;
+  surchargeMinor: number;
+  totalMinor: number;
+  reason: string | null; // null when surcharged
+  bin: string;
+  keyId: string;
+  expiresAt: number; // epoch seconds
+  signature: string;
 }
 
-// What the terminal gets back from /surcharge/quote
-export type SurchargeQuote = Omit<SurchargeServiceQuote, 'merchantId' | 'currency'>;
+// What the terminal gets back from /surcharge/quote: the service's quote minus merchantId
+export type SurchargeQuote = Omit<SurchargeServiceQuote, 'merchantId'>;
+
+// Set by the BFF when it can't get a quote (DECISIONS.md 008)
+export type FallbackReason = 'TIMEOUT' | 'UNAVAILABLE' | 'UNKNOWN_MERCHANT';
+
+// "No surcharge" needs no signature, so a fallback has no keyId, expiresAt or signature
+export type FallbackSurchargeQuote = Omit<SurchargeQuote, 'keyId' | 'expiresAt' | 'signature' | 'reason'> & {
+  reason: FallbackReason;
+};
 
 export class UpstreamError extends Error {
   constructor(readonly status: number, message: string) {
