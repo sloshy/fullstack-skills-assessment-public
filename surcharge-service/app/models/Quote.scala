@@ -46,7 +46,11 @@ case class Quote(merchantId: String,
                  amountMinor: Long,
                  surchargeMinor: Long,
                  totalMinor: Long,
-                 reason: Option[QuoteReason])
+                 reason: Option[QuoteReason],
+                 bin: String,
+                 keyId: String,
+                 expiresAt: Long,
+                 signature: String)
 
 object Quote {
   // reason is written as null when surcharged, not left out

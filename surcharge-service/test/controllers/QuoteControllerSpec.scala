@@ -13,6 +13,7 @@ import services.{BinTable, MerchantDirectory}
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.time.{Clock, Instant, ZoneOffset}
 import scala.concurrent.{ExecutionContext, Future}
 
 class QuoteControllerSpec extends PlaySpec
@@ -20,7 +21,13 @@ class QuoteControllerSpec extends PlaySpec
 
   val QuoteEndpoint = "/v1/quotes"
 
+  // the test vector's key and expiry from docs/quote-contract.md
+  val TestKey = "test-only-quote-signing-key-0123456789abcdef"
+  val IssuedAt = 1767225300L
+
   def builder: GuiceApplicationBuilder = new GuiceApplicationBuilder()
+    .configure("surcharge.quoteSigning.key" -> TestKey, "surcharge.quoteSigning.keyId" -> "test-1")
+    .overrides(bind[Clock].toInstance(Clock.fixed(Instant.ofEpochSecond(IssuedAt), ZoneOffset.UTC)))
 
   override def fakeApplication(): Application = builder.build()
 
@@ -62,17 +69,17 @@ class QuoteControllerSpec extends PlaySpec
 
     "return the contract's fields with their JSON types" in {
       val json = ok(quote("mer_001", BigDecimal("100.00"), "41111111")).as[JsObject]
-      Seq("merchantId", "currency", "network", "cardType")
+      Seq("merchantId", "currency", "network", "cardType", "bin", "keyId", "signature")
         .foreach(f => json(f) mustBe a[JsString])
       Seq("rate", "amount", "surcharge", "total", "currencyExponent", "amountMinor", "surchargeMinor",
-        "totalMinor").foreach(f => json(f) mustBe a[JsNumber])
-      Seq("currencyExponent", "amountMinor", "surchargeMinor", "totalMinor")
+        "totalMinor", "expiresAt").foreach(f => json(f) mustBe a[JsNumber])
+      Seq("currencyExponent", "amountMinor", "surchargeMinor", "totalMinor", "expiresAt")
         .foreach(f => json(f).as[BigDecimal].isWhole mustBe true)
       json("surchargeable") mustBe a[JsBoolean]
       json.keys must contain("reason")
     }
 
-    "round an exact half up" in {
+    "sign the quote so it reproduces the contract's test vector" in {
       // INC-4471: $185.00 visa credit at 2.5% is 4.625, half up to 4.63
       val json = ok(quote("mer_002", BigDecimal(185), "41111111"))
       num(json, "surcharge") mustBe BigDecimal("4.63")
@@ -81,6 +88,14 @@ class QuoteControllerSpec extends PlaySpec
       (json \ "amountMinor").as[Long] mustBe 18500
       (json \ "surchargeMinor").as[Long] mustBe 463
       (json \ "totalMinor").as[Long] mustBe 18963
+      (json \ "bin").as[String] mustBe "41111111"
+      (json \ "keyId").as[String] mustBe "test-1"
+      (json \ "expiresAt").as[Long] mustBe 1767225600L
+      (json \ "signature").as[String] mustBe "_eheNpSMYu68PGi9lBWW-VqEwKqvc2MkL8Sijse2LBU"
+    }
+
+    "expire a quote 300 seconds after the clock's time" in {
+      (ok(quote("mer_001", BigDecimal(10), "41111111")) \ "expiresAt").as[Long] mustBe IssuedAt + 300
     }
 
     "give exact totals with no floating point artefacts" in {
@@ -129,6 +144,7 @@ class QuoteControllerSpec extends PlaySpec
       num(json, "rate") mustBe BigDecimal(0)
       num(json, "surcharge") mustBe BigDecimal(0)
       num(json, "total") mustBe BigDecimal(100)
+      (json \ "signature").as[String] must not be empty
     }
 
     "not surcharge a prepaid card" in {
@@ -147,6 +163,7 @@ class QuoteControllerSpec extends PlaySpec
       (json \ "surchargeable").as[Boolean] mustBe false
       (json \ "reason").as[String] mustBe "UNKNOWN_BIN"
       num(json, "total") mustBe BigDecimal(100)
+      (json \ "signature").as[String] must not be empty
     }
 
     "not surcharge when the merchant has surcharging off, ahead of any card reason" in {
@@ -158,6 +175,7 @@ class QuoteControllerSpec extends PlaySpec
         num(json, "surcharge") mustBe BigDecimal(0)
         num(json, "total") mustBe num(json, "amount")
         (json \ "totalMinor").as[Long] mustBe 4000
+        (json \ "signature").as[String] must not be empty
       }
     }
 
@@ -172,6 +190,7 @@ class QuoteControllerSpec extends PlaySpec
         num(json, "rate") mustBe BigDecimal(0)
         (json \ "surchargeMinor").as[Long] mustBe 0
         num(json, "total") mustBe num(json, "amount")
+        (json \ "signature").as[String] must not be empty
       }
     }
 
@@ -196,6 +215,7 @@ class QuoteControllerSpec extends PlaySpec
         ("55555555", Seq("5555555555554444", "5555-5555 5555-4444"))
       ).foreach { case (bin, inputs) =>
         val expected = ok(quote("mer_001", BigDecimal(50), bin))
+        (expected \ "bin").as[String] mustBe bin
         inputs.foreach(input => comparable(ok(quote("mer_001", BigDecimal(50), input))) mustBe comparable(expected))
       }
     }

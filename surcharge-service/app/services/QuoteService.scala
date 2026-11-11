@@ -2,11 +2,15 @@ package services
 
 import models._
 
+import java.time.Clock
 import jakarta.inject._
 import scala.concurrent.{ExecutionContext, Future}
 
 @Singleton
-class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(implicit ec: ExecutionContext) {
+class QuoteService @Inject()(merchants: MerchantDirectory,
+                             bins: BinTable,
+                             signer: QuoteSigner,
+                             clock: Clock)(implicit ec: ExecutionContext) {
 
   // checks run in the order docs/quote-contract.md lists them: amount > 0, bin, merchant, then
   // the amount against the merchant's currency
@@ -39,7 +43,7 @@ class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(impli
             totals(amountMinor, rate, reason.isEmpty) match {
               case None => Left(QuoteError.InvalidAmount)
               case Some((surchargeMinor, totalMinor)) =>
-                Right(build(merchant, exponent, card, reason, rate, amountMinor, surchargeMinor, totalMinor))
+                Right(build(merchant, exponent, card, reason, rate, bin, amountMinor, surchargeMinor, totalMinor))
             }
         }
     }
@@ -58,8 +62,23 @@ class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(impli
   }
 
   private def build(merchant: MerchantConfig, exponent: Int, card: CardInfo, reason: Option[QuoteReason],
-                    rate: BigDecimal,
+                    rate: BigDecimal, bin: String,
                     amountMinor: Long, surchargeMinor: Long, totalMinor: Long): Quote = {
+    val expiresAt = clock.instant().getEpochSecond + QuoteSigning.TtlSeconds
+
+    val signature = signer.sign(SignedQuoteFields(
+      keyId = signer.keyId,
+      merchantId = merchant.merchantId,
+      currency = merchant.currency,
+      bin = bin,
+      network = card.network,
+      cardType = card.cardType.code,
+      amountMinor = amountMinor,
+      surchargeMinor = surchargeMinor,
+      totalMinor = totalMinor,
+      expiresAt = expiresAt
+    ))
+
     Quote(
       merchantId = merchant.merchantId,
       currency = merchant.currency,
@@ -74,7 +93,11 @@ class QuoteService @Inject()(merchants: MerchantDirectory, bins: BinTable)(impli
       amountMinor = amountMinor,
       surchargeMinor = surchargeMinor,
       totalMinor = totalMinor,
-      reason = reason
+      reason = reason,
+      bin = bin,
+      keyId = signer.keyId,
+      expiresAt = expiresAt,
+      signature = signature
     )
   }
 }

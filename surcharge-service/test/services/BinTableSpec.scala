@@ -43,6 +43,29 @@ class BinTableSpec extends PlaySpec {
     }
   }
 
+  "BinTable.parse" should {
+
+    val header = "range_start,range_end,network,card_type,country"
+
+    "read ranges after the header" in {
+      BinTable.parse(Iterator(header, "40000000,40009999,VISA,CREDIT,US")) mustBe
+        Vector(BinRange("40000000", "40009999", "VISA", CardType.Credit, "US"))
+    }
+
+    "store the trimmed network and card type it validated" in {
+      BinTable.parse(Iterator(header, "40000000,40009999, VISA , CREDIT ,US")) mustBe
+        Vector(BinRange("40000000", "40009999", "VISA", CardType.Credit, "US"))
+    }
+
+    "refuse a network or card type that can't be signed" in {
+      Seq("40000000,40009999,VI|SA,CREDIT,US", "40000000,40009999,VISA,CRE DIT,US", "40000000,40009999,,CREDIT,US")
+        .foreach { row =>
+          val e = the[IllegalStateException] thrownBy { BinTable.parse(Iterator(header, row)) }
+          e.getMessage must include("line 2")
+        }
+    }
+  }
+
   "BinTable.normalize" should {
 
     "take the first 8 of 8 to 19 digits" in {

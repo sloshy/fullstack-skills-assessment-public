@@ -37,14 +37,22 @@ object BinTable {
     if (valid) Some(digits.take(BinLength)) else None
   }
 
-  // range_start,range_end,network,card_type,country with a header row
+  // range_start,range_end,network,card_type,country with a header row.  network and card_type
+  // end up in signed quotes, so a value that can't be signed fails the load (at startup, the
+  // provider is eager) rather than surfacing later as a 500 on every quote for that range
   def parse(lines: Iterator[String]): Vector[BinRange] = {
-    lines.drop(1)
-      .filter(_.nonEmpty)
-      .map(line => {
+    lines.zipWithIndex.drop(1)
+      .filter(_._1.nonEmpty)
+      .map { case (line, index) =>
         val cols = line.split(',')
-        BinRange(cols(0), cols(1), cols(2), CardType.parse(cols(3)), cols(4))
-      })
+        val network = cols(2).trim
+        val cardType = cols(3).trim
+        Seq("network" -> network, "card_type" -> cardType).foreach { case (name, value) =>
+          if (!QuoteSigning.isToken(value))
+            throw new IllegalStateException(s"bin table line ${index + 1}: $name '$value' is not [A-Za-z0-9_-]+")
+        }
+        BinRange(cols(0), cols(1), network, CardType.parse(cardType), cols(4))
+      }
       .toVector
   }
 }
