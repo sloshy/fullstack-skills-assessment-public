@@ -164,3 +164,26 @@ gateway (.NET Task 3 territory).
   `import.meta.env.DEV` guard, and the web image runs the Vite dev server.
   Gate the dev merchants behind a build flag, and serve a production build,
   so the keys can't ship to a terminal.
+- **Add property-based tests.** None of the stacks has a property-testing
+  library. This system is full of invariants that example-based tests only
+  sample:
+  - **Surcharge service (ScalaCheck):**
+    - for any valid amount, rate and currency, `totalMinor` equals
+      `amountMinor + surchargeMinor`;
+    - the surcharge equals a half-up oracle computed from decimal
+      strings, and is never negative;
+    - non-credit cards always get 0;
+    - a signature verifies, and changing any single field breaks it;
+    - any 8–19-digit input with spaces and dashes inserted normalises to
+      its first 8 digits;
+    - the BIN lookup agrees with a brute-force narrowest-range oracle.
+      That last one is especially valuable for checking a faster lookup
+      against the original linear scan.
+  - **BFF (fast-check):**
+    - `toMinorUnits` agrees with a decimal-string oracle;
+    - under random interleavings of fills, writes and invalidations, the
+      cache never serves an entry across merchant or key.
+  - **Payments API (FsCheck):** across any sequence of partial refunds,
+    the total surcharge refunded never exceeds the surcharge charged
+    (rule 5). Task 7 #4 would also want "totals always equal the sum of
+    their parts".
