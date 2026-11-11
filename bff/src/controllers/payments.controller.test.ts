@@ -412,12 +412,12 @@ describe('write timeouts (charges are not cancelled upstream)', () => {
 
   it('keeps the read timeout for GETs', async () => {
     await setTimeouts(50, 5000);
-    fetchMock.mockImplementation(
-      (url: URL, opts?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          if (url.pathname === '/api/merchants/me') return fakePaymentsApi(url, opts).then(_resolve);
-          opts?.signal?.addEventListener('abort', () => reject(opts.signal?.reason));
-        }),
+    fetchMock.mockImplementation((url: URL, opts?: RequestInit) =>
+      url.pathname === '/api/merchants/me'
+        ? fakePaymentsApi(url, opts)
+        : new Promise<Response>((_resolve, reject) => {
+            opts?.signal?.addEventListener('abort', () => reject(opts.signal?.reason));
+          }),
     );
 
     const started = Date.now();

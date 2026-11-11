@@ -164,6 +164,22 @@ gateway (.NET Task 3 territory).
   `import.meta.env.DEV` guard, and the web image runs the Vite dev server.
   Gate the dev merchants behind a build flag, and serve a production build,
   so the keys can't ship to a terminal.
+- **Close the linting and formatting gaps.** No service has a formatter
+  (scalafmt, Prettier, `dotnet format`), and there's no CI pipeline,
+  pre-commit hook or root `.editorconfig`.
+  - **Scala:** scalafix isn't set up. Unused-code warnings are explicitly
+    off (`-Xlint:-unused,_`), and warnings aren't fatal.
+  - **Web:** ESLint runs without type-aware rules, and unused variables
+    and `exhaustive-deps` are only warnings.
+  - **C#:** no `.editorconfig`, analyzer level, `EnforceCodeStyleInBuild`
+    or warnings-as-errors.
+  - **Approach:** adopt each formatter in its own formatting-only commit,
+    so real changes aren't buried in reformatting. Then turn on stricter
+    analysis per service (re-enable unused warnings with `-Werror`, the
+    .NET analyzers, type-aware ESLint for the web app), and run all of it
+    in CI on every PR. The BFF already got the one guard that mattered
+    for INC-4493: type-aware ESLint with `no-misused-promises` and
+    `no-floating-promises`.
 - **Add property-based tests.** None of the stacks has a property-testing
   library. This system is full of invariants that example-based tests only
   sample:
