@@ -1,4 +1,4 @@
-import { request } from './client'
+import { request, write } from './client'
 
 export type PaymentStatus = 'APPROVED' | 'DECLINED' | 'REFUNDED'
 
@@ -56,10 +56,10 @@ export const listPayments = (page: number, pageSize: number) =>
 export const getPayment = (id: string) => request<Payment>(`/payments/${encodeURIComponent(id)}`)
 
 export const createPayment = (payment: NewPayment) =>
-  request<Payment>('/payments', { method: 'POST', body: payment })
+  write<Payment>('/payments', payment)
 
 export const refundPayment = (id: string) =>
-  request<Payment>(`/payments/${encodeURIComponent(id)}/refund`, { method: 'POST' })
+  write<Payment>(`/payments/${encodeURIComponent(id)}/refund`)
 
 export const quoteSurcharge = (amount: number, bin: string) =>
   request<SurchargeQuote>('/surcharge/quote', { method: 'POST', body: { amount, bin } })
