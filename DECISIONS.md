@@ -234,3 +234,20 @@ on config faults that would otherwise mis-price every payment.
 **Why:** Padding guesses the card type, which is exactly what rule 2
 forbids, and it guesses wrong in the direction that harms cardholders.
 Lenient handling of longer input keeps the availability stance of 008.
+
+## 013 · 2026-11-11 · One commit per task (or meaningful sub-task)
+
+**Context:** Phase 1 was planned as two parallel worktrees. Each touches
+two tasks (1A: Tasks 1 and 3; 1B: Tasks 4 and 5), so it would naturally
+become one bundled commit. The follow-up call asks for a walkthrough of
+each change and the reasoning behind it.
+**Decision:**
+- Commits are split by task, or by sub-task where there's a meaningful
+  checkpoint. Phase 1A becomes Task 1 (exact money), Task 3 (rules and
+  BINs) and signed quotes; Phase 1B becomes Task 5, then Task 4.
+- Every commit compiles and passes its tests on its own. The last commit's
+  tree must exactly match the reviewed version.
+- Each commit message is approved separately.
+
+**Why:** Each commit can be explained, reviewed and reverted on its own,
+and the history tells the story task by task, not just phase by phase.
