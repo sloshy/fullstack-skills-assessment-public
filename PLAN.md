@@ -56,29 +56,18 @@ quote.
   p99, max, req/s and errors, with the machine details and the command used.
 
 ### Phase 0.5: fix the quote contract (on `main`, before forking)
-1A produces the new fields and 1B's fallback emits them, so the response
-shape is agreed first and written into this file:
-- Existing fields stay, with exact decimal values: `merchantId`,
-  `currency`, `network`, `cardType`, `surchargeable`, `rate`, `amount`,
-  `surcharge`, `total`.
-- New fields: `currencyExponent`, `amountMinor`, `surchargeMinor`,
-  `totalMinor`, `reason` (null when surcharged; otherwise `NOT_CREDIT`,
-  `UNKNOWN_BIN`, `MERCHANT_OPTED_OUT`, or the BFF fallbacks `TIMEOUT`,
-  `UNAVAILABLE`, `UNKNOWN_MERCHANT`), and `keyId`, `expiresAt` (epoch
-  seconds) and `signature`. Fallback codes, which count toward the alerts,
-  are `TIMEOUT`, `UNAVAILABLE` and `UNKNOWN_MERCHANT`; the others are
-  normal outcomes.
-- **Signature (`DECISIONS.md` 009):** HMAC-SHA256 over the canonical
-  UTF-8 string `v1|kid|merchantId|currency|bin|amountMinor|surchargeMinor|totalMinor|expiresAt`,
-  integers only (no decimals), `expiresAt` in epoch seconds, signature
-  base64url. The algorithm is fixed (never taken from the client).
-  BFF fallback quotes carry no signature: "no surcharge" needs none.
-- `POST /payments` gains an optional `quote` object (the signed quote, or
-  an explicit no-surcharge). The payments API ignores it until the C# side
-  lands, so nothing breaks.
-- Status codes the BFF passes through unchanged: 400 (malformed BIN or
-  body) and 422 (an invalid amount, including more decimal places than the
-  currency allows).
+1A produces the new fields and 1B's fallback emits them, so the contract is
+agreed first. It is in **`docs/quote-contract.md`**, which is the source of
+truth for:
+- field names, types and reason codes;
+- validation and status codes;
+- the canonical signed string and a test vector;
+- the BFF fallback shape;
+- the `quote` field on `POST /payments`, and what the payments API should
+  do with it.
+
+1A and 1B must both match it; a change to the contract is a change to that
+file.
 
 ### Phase 1 (in parallel, separate worktrees)
 
@@ -88,15 +77,24 @@ shape is agreed first and written into this file:
   minor unit (USD 2 decimals, JPY 0). `total = amount + surcharge`, exact.
 - `isSurchargeable` becomes credit only: prepaid and unknown cards are not
   surcharged (rules 1, 2). Opt-out stays (rule 6).
-- `/v1/quotes` requires an 8-digit BIN (a 400 otherwise); no zero-padding
-  of short input. The amount must fit the currency's minor unit.
+- BIN handling per `docs/quote-contract.md` and `DECISIONS.md` 011, on both
+  `/v1/quotes` and `/v1/bins`:
+  - only digits, 8 to 19 of them (after removing spaces and dashes), and
+    the first 8 are used;
+  - fewer than 8 digits gets a 400, and there's no zero-padding;
+  - update the 6-digit padding test in `BinTableSpec.scala`;
+  - add leniency tests: a full 16-digit card number, a 15-digit Amex, a
+    19-digit number, and spaces and dashes all quote the same as the first
+    8; 20 digits, letters and 6 or 7 digits get a 400.
+- The amount must fit the currency's minor unit.
 - Additive contract: keep the existing numeric fields, written from
   `BigDecimal`, and add `amountMinor`, `surchargeMinor`, `totalMinor`, the
   currency exponent, `reason`, and the signature fields from Phase 0.5.
-- Sign quotes with HMAC-SHA256 (`javax.crypto.Mac`). The key and key ID
-  come from config and an environment variable; there's a dev default, and
-  the service refuses to start in prod mode without a real key. Expiry
-  about 5 min.
+- Sign quotes with HMAC-SHA256 (`javax.crypto.Mac`), matching the test
+  vector in `docs/quote-contract.md`. The key and key ID come from config
+  or env vars, with a dev default and a startup warning (the same pattern
+  as `play.http.secret.key`). Expiry 300 s.
+- Update `scripts/load-test.mjs` to send whole yen for `mer_003`.
 - Tests for each gap: a half-up tie (185 at 2.5% gives 4.63), JPY whole
   yen, prepaid, unknown BIN, short BIN, exact totals, opt-out total, plus
   signature tests (it verifies, any tampered field fails, expiry is
@@ -111,25 +109,34 @@ shape is agreed first and written into this file:
 - Every async route handler is wrapped so errors reach the error
   middleware. Add `unhandledRejection`/`uncaughtException` handlers as a
   last line of defence, with logging and a graceful exit.
-- Fetch timeouts (`AbortSignal.timeout`) on both upstream clients.
-- Preview quote fallback per `DECISIONS.md` 008: on a timeout, network
-  error or 5xx, or the surcharge service's 404 for an unknown merchant,
-  return an explicit no-surcharge quote with a `reason`. The currency and
-  exponent come from `getMerchant`. A 400 or 422 passes through unchanged.
-  An invalid API key stays a 401 and never gets a fallback quote.
-- Extend `SurchargeServiceQuote`/`SurchargeQuote` (`bff/src/types/index.ts`)
-  and the field whitelist in `surcharge.controller.ts`. Today it copies 7
-  named fields and drops `merchantId` and `currency`. Pass through
-  `currency`, the `*Minor` fields, `currencyExponent`, `reason`, `keyId`,
-  `expiresAt` and `signature`. Test it.
-- Fallback `amountMinor`/`totalMinor` are computed with exponent-aware
-  rounding of the amount (currency from `getMerchant`, whose `Merchant`
-  type has it), never `Math.trunc(x * 100)`.
+- Fetch timeouts (`AbortSignal.timeout`) on both upstream clients. The
+  quote uses `SURCHARGE_QUOTE_TIMEOUT_MS` (default 1500). Payments API
+  calls, including `getMerchant`, use `PAYMENTS_API_TIMEOUT_MS`.
+- The quote endpoint, fallback and pass-through follow
+  **`docs/quote-contract.md`** exactly. That covers:
+  - the full trigger list, including unexpected 4xx and an
+    unreadable or incomplete body;
+  - the required-field check;
+  - status-only pass-through for 400 and 422;
+  - 401 vs 502 when `getMerchant` fails;
+  - the exponent-aware `amountMinor` algorithm.
+- The response is the service's body with `merchantId` removed and every
+  other field passed through (a spread, not a whitelist), so the signed
+  fields reach the terminal intact. Update `SurchargeServiceQuote` and
+  `SurchargeQuote` (`bff/src/types/index.ts`), and the existing test that
+  asserts `currency` is stripped (`surcharge.controller.test.ts:54`).
 - Cut for time: a circuit breaker. A short timeout plus the fallback is
   enough here; the breaker is described in `NOTES.md`.
-- Tests: two merchants against the cache, refund invalidation, the process
-  surviving a failed upstream and an invalid API key, timeout leading to
-  fallback, 400 passing through.
+- Tests:
+  - two merchants against the cache, and refund invalidation;
+  - the process surviving a failed upstream and an invalid API key;
+  - timeout, network error, 5xx, unexpected 4xx, incomplete body and
+    service 404 each giving the right fallback `reason`;
+  - 400 and 422 passing through with status only;
+  - a 401 from `getMerchant` staying 401, and other `getMerchant` failures
+    giving 502;
+  - fallback `amountMinor` for USD and JPY, and a 422 for too many
+    decimals.
 
 ### Phase 2: web terminal (after 1A and 1B)
 - A debounced quote for the real amount and BIN. Show the server's
@@ -168,10 +175,14 @@ shape is agreed first and written into this file:
       must match the request, and the BIN must match the first 8 digits
       of `CardNumber` (otherwise a quote signed for a credit card could be
       replayed with a debit card). An explicit "no surcharge" is accepted
-      unsigned. A missing, bad, expired or mismatched quote with a
-      surcharge is rejected, so the terminal re-quotes and shows the
-      figures again, never silently. The shared key comes from config,
-      and the service refuses to start without it;
+      unsigned. A missing `quote`, or a non-zero surcharge with a bad,
+      expired or mismatched quote, gets `409 quote_invalid`, so the
+      terminal re-quotes and shows the figures again, never silently. The
+      payments API reads the shared key from config. In production both
+      services should refuse to start without a real key (`DECISIONS.md`
+      010). Optionally, reject a non-zero surcharge if the merchant has
+      opted out since the quote was issued. Roll out in stages per the
+      contract;
     - per-currency exponent;
     - refund amount bookkeeping;
     - the request log recording card data (a PCI issue).

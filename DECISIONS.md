@@ -94,8 +94,9 @@ rejected.
 - **Fail open on surcharging, never on the payment.** Card not in the BIN
   table, lookup failure, timeout, outage, or an unknown merchant all mean
   *no surcharge*, shown to the customer and charged exactly as shown.
-- **Malformed input is a validation error, not a fallback.** A BIN that
-  isn't 8 digits gets a 400 from the quote endpoint. In the terminal that
+- **Malformed input is a validation error, not a fallback.** A BIN with
+  fewer than 8 digits gets a 400 from the quote endpoint (the exact rule is
+  in 011). In the terminal that
   means "keep typing", and it is never a reason to refuse a valid card.
 - **The charge is bound to what was shown.** The terminal sends the quote
   it displayed (a signed quote, see 009, or an explicit "no surcharge"
@@ -144,12 +145,16 @@ merchant.
 - The surcharge service signs each quote with HMAC-SHA256 under a key it
   shares with the payments API. The signed text is the canonical UTF-8
   string
-  `v1|kid|merchantId|currency|bin|amountMinor|surchargeMinor|totalMinor|expiresAt`:
+  `v1|kid|merchantId|currency|bin|network|cardType|amountMinor|surchargeMinor|totalMinor|expiresAt`
+  (network and card type are included because the payments API stores
+  them on the payment):
   integers only, `expiresAt` in epoch seconds, signature base64url. The
   key ID is returned as `keyId` so keys can be rotated. The algorithm is
-  fixed, never taken from the client.
+  fixed, never taken from the client. The full contract, with a test
+  vector, is `docs/quote-contract.md`.
 - The signature and expiry are returned as **new, additive fields**.
-  Existing fields and status codes don't change.
+  Existing fields don't change. The few deliberate status-code changes are
+  listed in `docs/quote-contract.md` ("Behaviour changes").
 - The terminal sends the signed quote back in the `POST /payments` body.
   The payments API's JSON binding skips unknown properties (`Program.cs:13`
   only adds an enum converter), so the field is ignored until the C# side
@@ -166,11 +171,66 @@ merchant.
     fail-open behaviour.
   - A bad, expired or mismatched quote is rejected so the terminal
     re-quotes and shows the figures again. It is never silently re-priced.
-- The key comes from configuration (an environment variable). There's a
-  dev-only default for local runs, and production would refuse to start
-  without a real key.
+- The key comes from configuration (an environment variable), with a
+  dev-only default for local runs. ~~Production would refuse to start
+  without a real key.~~ Superseded by 010: a startup warning instead,
+  because the Docker image runs in production mode.
 
 **Why:** It makes the binding verifiable without storing anything. It also
 removes the charge-time call to the surcharge service, which helps
 availability. And it can ship before the C# change without breaking any
 existing consumer.
+
+## 010 · 2026-11-11 · Quote contract choices: signing key, missing quote, unknown currency
+
+**Context:** Choices made while fixing `docs/quote-contract.md` (Phase 0.5).
+**Decision:**
+- **Signing key:** a development default in `conf/application.conf`,
+  overridden by `QUOTE_SIGNING_KEY` / `QUOTE_SIGNING_KEY_ID`, with a startup
+  warning while the default is in use. This is the same pattern as
+  `play.http.secret.key`. It supersedes 009's "production would refuse to
+  start without a real key": the Docker image runs Play in production mode,
+  so enforcing that would break `docker compose up` for local runs. The
+  refusal is described in `NOTES.md` as a production deployment step.
+- **Payment with no `quote`:** once the payments API verifies quotes
+  (C#, described only), a payment with no `quote` gets
+  `409 quote_invalid`. The rollout goes: the terminal ships first, then
+  the payments API verifies in log-only mode, then it enforces, with a
+  legacy re-quote path behind a flag for direct API callers.
+- **Unknown currency exponent:** a `500` configuration error, never a silent
+  default of 2. A default of 2 is how JPY ends up captured at 100×.
+
+**Why:** Keep local development working without weakening the production
+story. Make the eventual C# tightening deliberate and staged. Fail loudly
+on config faults that would otherwise mis-price every payment.
+
+## 011 · 2026-11-11 · BINs are 8 digits: lenient for longer input, no zero-padding
+
+**Context:**
+- `docs/surcharging.md` keys card type on the first 8 digits.
+  ISO/IEC 7812-1:2017 moved BINs from 6 to 8 digits, and Visa and Mastercard
+  required acquirers to support that by April 2022. Every card number is
+  long enough to have 8 digits, whatever its issuer's BIN length.
+- Today the service zero-pads shorter input. Measured on
+  `conf/bins.csv.gz`, 8,710 six-digit prefixes cover more than one
+  network or type. In 4,551 of them, padding with `00` classifies the
+  prefix as credit even though some BINs under it are debit or prepaid, so
+  it would surcharge them (rules 1 and 2).
+- Accepting *exactly* 8 digits was considered. Nothing in the docs requires
+  it, and a hard limit would let a client bug (such as sending a full card
+  number) stop payments.
+
+**Decision:**
+- **Longer input stays lenient:** 8 to 19 digits after removing spaces and
+  dashes, with the first 8 used. That's today's behaviour, except that
+  today there's no 19-digit cap and letters are silently stripped. It's now written
+  into the spec and covered by tests.
+- **Fewer than 8 digits, or non-digits, gets `400 invalid_bin`,** on both
+  `/v1/quotes` and `/v1/bins`. There's no zero-padding. No real payment can
+  hit this, because both callers send 8 digits; in the terminal it means
+  "keep typing".
+- It is part of Scala Task 3 (Phase 1A), not a "with more time" item.
+
+**Why:** Padding guesses the card type, which is exactly what rule 2
+forbids, and it guesses wrong in the direction that harms cardholders.
+Lenient handling of longer input keeps the availability stance of 008.
