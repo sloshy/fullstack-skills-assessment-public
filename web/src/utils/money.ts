@@ -29,3 +29,7 @@ export const toMinorUnitsWithExponent = (amount: number, exponent: number) => {
   const text = String(amount)
   return Math.round(text.includes('e') ? amount * 10 ** exponent : Number(`${text}e${exponent}`))
 }
+
+/** A decimal amount in the currency's minor units, rounded half up to the nearest unit. */
+export const toMinorUnits = (amount: number, currency: string) =>
+  toMinorUnitsWithExponent(amount, fractionDigits(currency))

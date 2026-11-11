@@ -7,7 +7,7 @@ import { getPayment, Payment, refundPayment } from '../api/payments'
 import { CardLabel } from '../components/CardLabel'
 import { StatusTag } from '../components/StatusTag'
 import { classifyWriteError } from '../payments/writeErrors'
-import { formatMinorUnits, formatMoney } from '../utils/money'
+import { formatMinorUnits, formatMoney, toMinorUnits } from '../utils/money'
 
 const { Text } = Typography
 
@@ -84,6 +84,9 @@ export const PaymentDetailPage = () => {
   }
 
   const money = (value: number) => formatMoney(value, payment.currency)
+  // INC-4478: until the C# fix lands, the gateway can capture a different amount from the receipt
+  const captured = (payment.status === 'APPROVED' || payment.status === 'REFUNDED') && payment.gateway.reference !== null
+  const capturedMismatch = captured && payment.gateway.capturedAmountMinor !== toMinorUnits(payment.total, payment.currency)
 
   return (
     <>
@@ -128,6 +131,14 @@ export const PaymentDetailPage = () => {
               <Button size='small' block onClick={() => { setUnknownRefundAt(undefined); setRefreshError(undefined) }}>I&apos;ve checked</Button>
             </Space>
           }
+          style={{ marginBottom: 16 }}
+        />
+      }
+      {capturedMismatch &&
+        <Alert
+          type='warning'
+          showIcon
+          message={`The gateway captured ${formatMinorUnits(payment.gateway.capturedAmountMinor, payment.currency)}, which differs from the receipt total of ${money(payment.total)}.`}
           style={{ marginBottom: 16 }}
         />
       }

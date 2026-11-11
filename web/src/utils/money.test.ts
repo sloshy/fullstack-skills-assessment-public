@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { formatMinorUnits, formatMinorWithExponent, formatMoney, fractionDigits, toMinorUnitsWithExponent } from './money'
+import { formatMinorUnits, formatMinorWithExponent, formatMoney, fractionDigits, toMinorUnits, toMinorUnitsWithExponent } from './money'
 
 describe('formatMoney', () => {
   test('formats in the given currency', () => {
@@ -46,5 +46,18 @@ describe('fractionDigits', () => {
   test('USD has 2, JPY has 0', () => {
     expect(fractionDigits('USD')).toBe(2)
     expect(fractionDigits('JPY')).toBe(0)
+  })
+})
+
+describe('toMinorUnits', () => {
+  test("uses the currency's digits", () => {
+    expect(toMinorUnits(132.3, 'USD')).toBe(13230)
+    expect(toMinorUnits(4.35, 'USD')).toBe(435)
+    expect(toMinorUnits(1234, 'JPY')).toBe(1234)
+  })
+
+  test('tells neighbouring cents apart, as the mismatch check needs', () => {
+    expect(toMinorUnits(132.29, 'USD')).toBe(13229)
+    expect(toMinorUnits(132.3, 'USD')).not.toBe(13229)
   })
 })
