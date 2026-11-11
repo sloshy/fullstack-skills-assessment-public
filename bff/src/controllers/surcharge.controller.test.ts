@@ -311,7 +311,7 @@ describe('fallback to "no surcharge"', () => {
     expect(errors).toContain('Config fault: no currency exponent for EUR');
   });
 
-  it('logs the fallback reason', async () => {
+  it('logs the fallback reason and the merchant', async () => {
     surchargeService = async () => fetchResponse(404, { error: 'unknown_merchant' });
 
     await quote({ amount: 185, bin: '41111111' });
@@ -319,7 +319,7 @@ describe('fallback to "no surcharge"', () => {
     const requestLog = (console.log as jest.Mock).mock.calls
       .map(([line]) => JSON.parse(String(line)))
       .find((entry) => entry.logger_name === 'middleware.requestLogger');
-    expect(requestLog).toMatchObject({ surcharge_fallback: 'UNKNOWN_MERCHANT' });
+    expect(requestLog).toMatchObject({ merchant_id: 'mer_002', surcharge_fallback: 'UNKNOWN_MERCHANT' });
   });
 });
 

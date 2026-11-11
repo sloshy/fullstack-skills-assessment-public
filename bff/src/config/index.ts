@@ -25,4 +25,6 @@ export const config = {
   // Non-idempotent writes (create, refund). The payments API doesn't cancel a charge when we
   // give up, and some gateway paths take ~5 s, so this must be well above any real charge time.
   paymentsApiWriteTimeoutMs: positiveIntFromEnv('PAYMENTS_API_WRITE_TIMEOUT_MS', 30000),
+  // Upper bound on cached list pages across all merchants; the oldest go first
+  paymentListCacheMaxEntries: positiveIntFromEnv('PAYMENT_LIST_CACHE_MAX_ENTRIES', 1000),
 };

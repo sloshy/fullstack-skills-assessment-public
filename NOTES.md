@@ -157,3 +157,10 @@ gateway (.NET Task 3 territory).
   pairs across the BIN table and the merchant fixtures). AI assistance pays
   off here: it can do the mechanical rewrites and generate the
   characterization tests that show the migrated service behaves the same.
+- **Keep dev-only merchant keys out of production builds.** The terminal's
+  merchant dropdown (`web/src/merchants/devMerchants.ts`) hard-codes every
+  merchant's API key. Its comment says it's dev only and that production
+  signs in through SSO, but nothing enforces that: there's no
+  `import.meta.env.DEV` guard, and the web image runs the Vite dev server.
+  Gate the dev merchants behind a build flag, and serve a production build,
+  so the keys can't ship to a terminal.

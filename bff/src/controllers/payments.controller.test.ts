@@ -3,10 +3,13 @@ import { Express } from 'express';
 
 const HARBOR_KEY = 'sk_test_harbor_8d1e6b03c7';
 const COASTAL_KEY = 'sk_test_coastal_51f0a9e2d4';
+const HARBOR_SECOND_KEY = 'sk_test_harbor_frontdesk_2'; // another key for the same merchant
+const BAD_KEY = 'sk_test_revoked_0000000000';
 
 const HARBOR = { id: 'mer_002', name: 'Harbor Dental Group', currency: 'USD', surchargeRate: 2.5 };
 const MERCHANTS: Record<string, { id: string; name: string; currency: string; surchargeRate: number }> = {
   [HARBOR_KEY]: HARBOR,
+  [HARBOR_SECOND_KEY]: HARBOR,
   [COASTAL_KEY]: { id: 'mer_001', name: 'Coastal Coffee', currency: 'USD', surchargeRate: 3 },
 };
 
@@ -49,6 +52,12 @@ function listCalls(apiKey?: string) {
       ((opts as RequestInit | undefined)?.method ?? 'GET') === 'GET' &&
       (apiKey === undefined || apiKeyOf(opts as RequestInit) === apiKey),
   );
+}
+
+function requestLogs(): Record<string, unknown>[] {
+  return (console.log as jest.Mock).mock.calls
+    .map(([line]) => JSON.parse(String(line)))
+    .filter((entry) => entry.logger_name === 'middleware.requestLogger');
 }
 
 beforeEach(async () => {
@@ -94,6 +103,61 @@ describe('GET /api/payments', () => {
     expect(listCalls()).toHaveLength(1);
   });
 
+  it('treats the same parameters in a different order as the same page', async () => {
+    await request(app).get('/api/payments?pageSize=10&page=2').set('X-Api-Key', HARBOR_KEY);
+    await request(app).get('/api/payments?page=2&pageSize=10').set('X-Api-Key', HARBOR_KEY);
+
+    expect(listCalls()).toHaveLength(1);
+  });
+
+  it('forwards only page and pageSize, so junk parameters cannot create new cache entries', async () => {
+    await request(app).get('/api/payments?page=2&cacheBust=1&pageSize=10').set('X-Api-Key', HARBOR_KEY);
+    await request(app).get('/api/payments?page=2&pageSize=10&cacheBust=2&x=y').set('X-Api-Key', HARBOR_KEY);
+
+    expect(listCalls()).toHaveLength(1);
+    expect(String(listCalls()[0][0])).toBe('http://localhost:5080/api/payments?page=2&pageSize=10');
+  });
+
+  it('does not share an entry between two keys of the same merchant', async () => {
+    await request(app).get('/api/payments?page=1').set('X-Api-Key', HARBOR_KEY);
+    const res = await request(app).get('/api/payments?page=1').set('X-Api-Key', HARBOR_SECOND_KEY);
+
+    expect(res.body).toEqual(pageFor('mer_002'));
+    expect(listCalls(HARBOR_KEY)).toHaveLength(1);
+    expect(listCalls(HARBOR_SECOND_KEY)).toHaveLength(1);
+  });
+
+  it("a write through one key clears the merchant's entries for every key", async () => {
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_SECOND_KEY);
+
+    await request(app).post('/api/payments').set('X-Api-Key', HARBOR_KEY).send({ amount: 10 });
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_SECOND_KEY);
+
+    expect(listCalls(HARBOR_SECOND_KEY)).toHaveLength(2);
+  });
+
+  it('gives two merchants requesting the same URL their own payments (INC-4486)', async () => {
+    const harbor = await request(app).get('/api/payments?page=1').set('X-Api-Key', HARBOR_KEY);
+    const coastal = await request(app).get('/api/payments?page=1').set('X-Api-Key', COASTAL_KEY);
+    const harborAgain = await request(app).get('/api/payments?page=1').set('X-Api-Key', HARBOR_KEY);
+
+    expect(harbor.body).toEqual(pageFor('mer_002'));
+    expect(coastal.body).toEqual(pageFor('mer_001'));
+    expect(harborAgain.body).toEqual(pageFor('mer_002'));
+    expect(listCalls(HARBOR_KEY)).toHaveLength(1);
+    expect(listCalls(COASTAL_KEY)).toHaveLength(1);
+  });
+
+  it("gives an invalid key the payments API's 401, not a page another merchant cached", async () => {
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
+
+    const res = await request(app).get('/api/payments').set('X-Api-Key', BAD_KEY);
+
+    expect(res.status).toBe(401);
+    expect(JSON.stringify(res.body)).not.toContain('mer_002');
+  });
+
   it('does not cache an error response', async () => {
     fetchMock.mockImplementation(async (url: URL, opts?: RequestInit) =>
       url.pathname === '/api/payments' ? fetchResponse(503, { error: 'busy' }) : fakePaymentsApi(url, opts),
@@ -106,14 +170,85 @@ describe('GET /api/payments', () => {
     expect(res.status).toBe(200);
     expect(listCalls()).toHaveLength(2);
   });
+
+  it('logs the merchant and whether the list came from the cache, never the API key', async () => {
+    await request(app).get('/api/payments?page=1').set('X-Api-Key', HARBOR_KEY);
+    await request(app).get('/api/payments?page=1').set('X-Api-Key', HARBOR_KEY);
+
+    const logs = requestLogs();
+    expect(logs.map((entry) => [entry.merchant_id, entry.cache])).toEqual([
+      ['mer_002', 'miss'],
+      ['mer_002', 'hit'],
+    ]);
+    const everything = JSON.stringify([(console.log as jest.Mock).mock.calls, (console.error as jest.Mock).mock.calls]);
+    expect(everything).not.toContain(HARBOR_KEY);
+  });
 });
 
-describe('POST /api/payments', () => {
-  it('clears the cached list', async () => {
+describe('cache invalidation', () => {
+  async function fillBothMerchants() {
     await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
-    await request(app).post('/api/payments').set('X-Api-Key', HARBOR_KEY).send({ amount: 10 });
-    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
+    await request(app).get('/api/payments').set('X-Api-Key', COASTAL_KEY);
+  }
 
+  async function refetchBothMerchants() {
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
+    await request(app).get('/api/payments').set('X-Api-Key', COASTAL_KEY);
+  }
+
+  it("a successful create clears only that merchant's cached lists", async () => {
+    await fillBothMerchants();
+
+    const res = await request(app).post('/api/payments').set('X-Api-Key', HARBOR_KEY).send({ amount: 10 });
+    await refetchBothMerchants();
+
+    expect(res.status).toBe(201);
+    expect(listCalls(HARBOR_KEY)).toHaveLength(2);
+    expect(listCalls(COASTAL_KEY)).toHaveLength(1);
+  });
+
+  it('a failed create clears nothing', async () => {
+    createStatus = 400;
+    await fillBothMerchants();
+
+    const res = await request(app).post('/api/payments').set('X-Api-Key', HARBOR_KEY).send({ amount: -1 });
+    await refetchBothMerchants();
+
+    expect(res.status).toBe(400);
+    expect(listCalls(HARBOR_KEY)).toHaveLength(1);
+    expect(listCalls(COASTAL_KEY)).toHaveLength(1);
+  });
+
+  it("a successful refund clears only that merchant's cached lists", async () => {
+    await fillBothMerchants();
+
+    const res = await request(app).post('/api/payments/pay_1/refund').set('X-Api-Key', HARBOR_KEY).send({});
+    await refetchBothMerchants();
+
+    expect(res.status).toBe(200);
+    expect(listCalls(HARBOR_KEY)).toHaveLength(2);
+    expect(listCalls(COASTAL_KEY)).toHaveLength(1);
+  });
+
+  it('a failed refund clears nothing', async () => {
+    refundStatus = 409;
+    await fillBothMerchants();
+
+    const res = await request(app).post('/api/payments/pay_1/refund').set('X-Api-Key', HARBOR_KEY).send({});
+    await refetchBothMerchants();
+
+    expect(res.status).toBe(409);
+    expect(listCalls(HARBOR_KEY)).toHaveLength(1);
+    expect(listCalls(COASTAL_KEY)).toHaveLength(1);
+  });
+
+  it('a create with a bad key clears nothing', async () => {
+    await fillBothMerchants();
+
+    const res = await request(app).post('/api/payments').set('X-Api-Key', BAD_KEY).send({ amount: 10 });
+    await refetchBothMerchants();
+
+    expect(res.status).toBe(401);
     expect(listCalls()).toHaveLength(2);
   });
 });
@@ -149,17 +284,25 @@ describe('write timeouts (charges are not cancelled upstream)', () => {
     expect(res.body).toEqual({ id: 'pay_slow' });
   });
 
-  it('returns 504 payment_outcome_unknown when a create passes the write timeout', async () => {
+  it('returns 504 payment_outcome_unknown when a create passes the write timeout, and still invalidates', async () => {
     await setTimeouts(50, 100);
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
+    await request(app).get('/api/payments').set('X-Api-Key', COASTAL_KEY);
     fetchMock.mockImplementation(slowCreate(5000));
 
     const res = await request(app).post('/api/payments').set('X-Api-Key', HARBOR_KEY).send({ amount: 10 });
+    fetchMock.mockImplementation(fakePaymentsApi);
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
+    await request(app).get('/api/payments').set('X-Api-Key', COASTAL_KEY);
 
     expect(res.status).toBe(504);
     expect(res.body).toEqual({ error: 'payment_outcome_unknown' });
+    expect(listCalls(HARBOR_KEY)).toHaveLength(2);
+    expect(listCalls(COASTAL_KEY)).toHaveLength(1);
   });
 
   it('returns 504 payment_outcome_unknown when the connection drops after a refund was sent', async () => {
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
     fetchMock.mockImplementation(async (url: URL, opts?: RequestInit) =>
       url.pathname.endsWith('/refund')
         ? Promise.reject(new TypeError('fetch failed', { cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }) }))
@@ -167,9 +310,11 @@ describe('write timeouts (charges are not cancelled upstream)', () => {
     );
 
     const res = await request(app).post('/api/payments/pay_1/refund').set('X-Api-Key', HARBOR_KEY).send({});
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
 
     expect(res.status).toBe(504);
     expect(res.body).toEqual({ error: 'payment_outcome_unknown' });
+    expect(listCalls(HARBOR_KEY)).toHaveLength(2);
   });
 
   // Shaped like Node's system errors, which fetch puts in `cause`
@@ -216,26 +361,37 @@ describe('write timeouts (charges are not cancelled upstream)', () => {
       () => new AggregateError([systemError('ECONNREFUSED', 'connect'), systemError('EHOSTUNREACH', 'read')]),
     ],
   ])('returns 504 payment_outcome_unknown for %s', async (_name, cause) => {
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
     createRejectsWith(cause());
 
     const res = await request(app).post('/api/payments').set('X-Api-Key', HARBOR_KEY).send({ amount: 10 });
+    fetchMock.mockImplementation(fakePaymentsApi);
+    await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
 
     expect(res.status).toBe(504);
     expect(res.body).toEqual({ error: 'payment_outcome_unknown' });
+    expect(listCalls(HARBOR_KEY)).toHaveLength(2);
   });
 
-  it.each([502, 503, 504])('returns 504 payment_outcome_unknown for a gateway %p page that is not JSON', async (status) => {
-    fetchMock.mockImplementation(async (url: URL, opts?: RequestInit) =>
-      url.pathname === '/api/payments' && opts?.method === 'POST'
-        ? new Response('<html>Gateway error</html>', { status })
-        : fakePaymentsApi(url, opts),
-    );
+  it.each([502, 503, 504])(
+    'returns 504 payment_outcome_unknown and invalidates for a gateway %p page that is not JSON',
+    async (status) => {
+      await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
+      fetchMock.mockImplementation(async (url: URL, opts?: RequestInit) =>
+        url.pathname === '/api/payments' && opts?.method === 'POST'
+          ? new Response('<html>Gateway error</html>', { status })
+          : fakePaymentsApi(url, opts),
+      );
 
-    const res = await request(app).post('/api/payments').set('X-Api-Key', HARBOR_KEY).send({ amount: 10 });
+      const res = await request(app).post('/api/payments').set('X-Api-Key', HARBOR_KEY).send({ amount: 10 });
+      fetchMock.mockImplementation(fakePaymentsApi);
+      await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);
 
-    expect(res.status).toBe(504);
-    expect(res.body).toEqual({ error: 'payment_outcome_unknown' });
-  });
+      expect(res.status).toBe(504);
+      expect(res.body).toEqual({ error: 'payment_outcome_unknown' });
+      expect(listCalls(HARBOR_KEY)).toHaveLength(2);
+    },
+  );
 
   it.each([500, 400, 429])('returns 502 and keeps the cache for a non-JSON %p from a write', async (status) => {
     await request(app).get('/api/payments').set('X-Api-Key', HARBOR_KEY);

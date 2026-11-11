@@ -1,5 +1,11 @@
+import { createHash } from 'node:crypto';
 import { AuthenticatedRequest, Merchant, UpstreamError } from '../types';
 import { fetchFromPaymentsApi } from './paymentsApiProxy';
+
+// Cache keys and anything else that outlives the request use this, never the raw key
+export function hashApiKey(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex');
+}
 
 // Merchant profiles hardly ever change, so each API key only gets looked up once
 const merchantCache = new Map<string, Merchant>();
@@ -12,9 +18,12 @@ function isMerchant(body: unknown): body is Merchant {
 // Throws UpstreamError with the payments API's status for an HTTP error (401 for a bad key),
 // or UpstreamError(502) for a network error, timeout or unreadable body.
 export async function getMerchant(req: AuthenticatedRequest): Promise<Merchant> {
-  const apiKey = req.apiKey ?? '';
-  const cached = merchantCache.get(apiKey);
-  if (cached) return cached;
+  const keyHash = hashApiKey(req.apiKey ?? '');
+  const cached = merchantCache.get(keyHash);
+  if (cached) {
+    req.merchantId = cached.id;
+    return cached;
+  }
 
   const { status, body } = await fetchFromPaymentsApi(req, '/merchants/me');
   if (status !== 200) {
@@ -26,6 +35,7 @@ export async function getMerchant(req: AuthenticatedRequest): Promise<Merchant> 
     throw new UpstreamError(502, 'upstream_error');
   }
 
-  merchantCache.set(apiKey, body);
+  merchantCache.set(keyHash, body);
+  req.merchantId = body.id;
   return body;
 }

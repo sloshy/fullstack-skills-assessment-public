@@ -2,6 +2,7 @@ import { Request } from 'express';
 
 export interface AuthenticatedRequest extends Request {
   apiKey?: string; // set by requireApiKey
+  merchantId?: string; // set by getMerchant once the key has been resolved, for the request log
 }
 
 export interface Merchant {

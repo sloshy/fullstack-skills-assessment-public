@@ -235,6 +235,29 @@ on config faults that would otherwise mis-price every payment.
 forbids, and it guesses wrong in the direction that harms cardholders.
 Lenient handling of longer input keeps the availability stance of 008.
 
+## 012 · 2026-11-11 · Payments list cache key: merchant ID + API-key hash + query
+
+**Context:** Task 4. The BFF cached the payments list under
+`req.originalUrl` alone, so every merchant shared one entry per page.
+`PLAN.md` 1B first proposed keying on the merchant ID.
+**Decision:**
+- **Key:** `merchantId` + SHA-256 of the API key + the normalised (sorted)
+  query string. The raw key is never stored in a key or logged.
+- **Invalidation:** per merchant, on a successful create or refund only.
+**Why:**
+- **One key per merchant.** `Merchant.ApiKey` is a single, unique column
+  (`payments-api/.../Data/Merchant.cs:7,21`), and every terminal of a
+  merchant uses it. So adding the key hash costs nothing in hit rate.
+- **It closes a revocation gap.** The BFF's merchant cache never expires
+  (Task 7 #5). With merchant-only keys, a rotated or revoked key would
+  still resolve to the merchant and could be served its cached list. With
+  the hash, a key can only hit entries it filled itself. Those expire
+  within the TTL, after which its requests reach the payments API and get
+  a 401.
+- **It still holds if production differs.** Production terminals sign in
+  through SSO, so the BFF would derive the key or merchant from the
+  session, not the browser. The keying stays correct either way.
+
 ## 013 · 2026-11-11 · One commit per task (or meaningful sub-task)
 
 **Context:** Phase 1 was planned as two parallel worktrees. Each touches
