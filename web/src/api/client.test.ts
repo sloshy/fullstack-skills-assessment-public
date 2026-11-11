@@ -9,7 +9,7 @@ import {
   WRITE_TIMEOUT_MS,
   WriteOutcomeUnknownError,
 } from './client'
-import { createPayment, refundPayment } from './payments'
+import { createPayment, QUOTE_TIMEOUT_MS, quoteSurcharge, refundPayment } from './payments'
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -53,6 +53,30 @@ describe('reads', () => {
 
     await expect(request('/payments/x')).rejects.toMatchObject({ status: 404, code: 'not_found' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('a cancelled request is not retried', async () => {
+    fetchMock.mockImplementation(hangingFetch())
+    const controller = new AbortController()
+
+    const result = request('/payments', { signal: controller.signal }).catch(e => e)
+    controller.abort()
+    expect(await result).toMatchObject({ name: 'AbortError' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('a quote waits longer than other reads, past the BFF worst case of 4.5 s', async () => {
+    vi.useFakeTimers()
+    fetchMock.mockImplementation(hangingFetch())
+
+    const result = quoteSurcharge(185, '41111111').catch(e => e)
+    await vi.advanceTimersByTimeAsync(4500)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(QUOTE_TIMEOUT_MS - 4500)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(QUOTE_TIMEOUT_MS * READ_RETRIES)
+    expect(await result).toMatchObject({ name: 'AbortError' })
   })
 
   test('time out after the read timeout', async () => {

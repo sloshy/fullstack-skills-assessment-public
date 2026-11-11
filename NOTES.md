@@ -203,3 +203,13 @@ gateway (.NET Task 3 territory).
     the total surcharge refunded never exceeds the surcharge charged
     (rule 5). Task 7 #4 would also want "totals always equal the sum of
     their parts".
+- **Add component tests for the terminal.** The web app has Vitest but no
+  DOM testing, so Phase 2 tests its logic as pure modules: quote state and
+  expiry, the client's retry and timeout policy, write-error
+  classification, and money. The React hook and pages that wire those
+  modules up are untested. A regression in the Charge block after an
+  unknown outcome, in clearing a rejected quote, or in the request-cancel
+  and timer cleanup would pass every test today. Those were checked by hand
+  in the integration run. *Approach:* add React Testing Library + jsdom and
+  a handful of page-level tests for the new-payment and refund flows, with
+  `fetch` stubbed and fake timers.

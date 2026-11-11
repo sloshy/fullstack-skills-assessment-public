@@ -1,13 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
-import { Alert, App, Button, Card, Col, Form, Input, InputNumber, Row } from 'antd'
+import { useRef, useState } from 'react'
+import { Alert, App, Button, Card, Col, Form, Input, InputNumber, Row, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { Link, useNavigate } from 'react-router-dom'
-import { errorMessage, isOutcomeUnknown } from '../api/client'
-import { createPayment, quoteSurcharge, SurchargeQuote } from '../api/payments'
+import { errorMessage } from '../api/client'
+import { createPayment, SurchargeQuote } from '../api/payments'
 import { describeCard } from '../components/CardLabel'
 import { useMerchant } from '../merchants/MerchantContext'
+import { isChargeable, isFallback, quoteInput, surchargeLabel } from '../payments/quote'
+import { useSurchargeQuote } from '../payments/useSurchargeQuote'
+import { classifyWriteError } from '../payments/writeErrors'
 import { binOf, digitsOnly, formatCardNumber, isValidCardNumber, parseExpiry } from '../utils/card'
-import { formatMoney, previewSurcharge } from '../utils/money'
+import { formatMinorWithExponent, formatMoney } from '../utils/money'
+
+const { Text } = Typography
 
 type PaymentForm_Shape = {
   amount: number
@@ -29,6 +34,9 @@ type UnknownAttempt = {
 const attemptValues = (amount: number | null | undefined, cardNumber: string | null | undefined) =>
   `${amount}|${digitsOnly(cardNumber ?? '')}`
 
+const quoteMoney = (quote: SurchargeQuote, minor: number) =>
+  formatMinorWithExponent(minor, quote.currencyExponent, quote.currency)
+
 export const NewPaymentPage = () => {
   const navigate = useNavigate()
   const { message } = App.useApp()
@@ -36,36 +44,32 @@ export const NewPaymentPage = () => {
   const [form] = Form.useForm<PaymentForm_Shape>()
   const [ submitting, setSubmitting ] = useState(false)
   const [ error, setError ] = useState<string>()
-  const [ card, setCard ] = useState<SurchargeQuote>()
   const [ unknownAttempt, setUnknownAttempt ] = useState<UnknownAttempt>()
   // State updates land a render later, so a fast second submit could still see submitting=false
   const inFlight = useRef(false)
 
-  const amount = Form.useWatch('amount', form) ?? 0
+  const amount = Form.useWatch('amount', form)
   const cardNumber = Form.useWatch('cardNumber', form)
+  const { view, latestQuote, requote } = useSurchargeQuote(amount, cardNumber)
+
   const bin = binOf(cardNumber ?? '')
+  // A fallback quote never looked the card up, so it has nothing to say about it
+  const cardQuote = latestQuote && latestQuote.bin === bin && !isFallback(latestQuote) ? latestQuote : undefined
   // DECISIONS.md 016: after an unknown outcome, Charge stays off for the same payment until the
   // operator says they've checked the list
   const blockedByUnknown = unknownAttempt?.values === attemptValues(amount, cardNumber)
-
-  // only used for the card label under the input, the amount is a placeholder
-  useEffect(() => {
-    if (!bin) {
-      setCard(undefined)
-      return
-    }
-    let active = true
-    quoteSurcharge(1, bin)
-      .then(q => { if (active) setCard(q) })
-      .catch(() => { if (active) setCard(undefined) })
-    return () => { active = false }
-  }, [bin])
-
-  const surcharge = amount > 0 ? previewSurcharge(amount, merchant.surchargeRate) : 0
-  const total = amount + surcharge
+  const canCharge = view.kind === 'ready' && !blockedByUnknown
 
   const onFinish = async (values: PaymentForm_Shape) => {
+    // rule 4: charge exactly the quote on screen, and only while it's still good
     if (inFlight.current || blockedByUnknown) return
+    if (view.kind !== 'ready' || !isChargeable(view, quoteInput(values.amount, values.cardNumber), Date.now())) {
+      setError('The total is out of date. Wait for it to update, then charge again.')
+      requote()
+      return
+    }
+    const { quote } = view
+
     const expiry = parseExpiry(values.expiry)!
     const cardDigits = digitsOnly(values.cardNumber)
     inFlight.current = true
@@ -81,6 +85,7 @@ export const NewPaymentPage = () => {
         expiryYear: expiry.year,
         cvv: values.cvv,
         customerName: values.customerName?.trim() || undefined,
+        quote,
       })
 
       if (payment.status === 'APPROVED') {
@@ -90,22 +95,33 @@ export const NewPaymentPage = () => {
       }
       navigate(`/payments/${payment.id}`)
     } catch (e) {
-      // DECISIONS.md 016: the operator checks first, which a retry would skip
-      if (isOutcomeUnknown(e)) {
+      const failure = classifyWriteError(e)
+      if (failure.kind === 'unknown') {
         setUnknownAttempt({
-          total: formatMoney(total, merchant.currency),
+          total: quoteMoney(quote, quote.totalMinor),
           last4: cardDigits.slice(-4),
           at: new Date(),
           values: attemptValues(values.amount, values.cardNumber),
         })
       } else {
-        setError(errorMessage(e))
+        if (failure.kind === 'requote') requote()
+        setError(failure.message)
       }
     } finally {
       inFlight.current = false
       setSubmitting(false)
     }
   }
+
+  const summaryNote = () => {
+    switch (view.kind) {
+      case 'needs-amount': return 'Enter an amount to see the total'
+      case 'needs-card': return 'Enter the card number to see the total'
+      case 'quoting': return 'Calculating…'
+      default: return undefined
+    }
+  }
+  const note = summaryNote()
 
   return <>
     <header className='page-header'>
@@ -131,7 +147,15 @@ export const NewPaymentPage = () => {
           {error && <Alert type='error' showIcon message='Payment failed' description={error} style={{ marginBottom: 16 }} />}
 
           <Form form={form} layout='vertical' requiredMark='optional' onFinish={onFinish} disabled={submitting}>
-            <Form.Item label={`Amount (${merchant.currency})`} name='amount' rules={[{ required: true, message: 'Enter an amount' }]}>
+            <Form.Item
+              label={`Amount (${merchant.currency})`}
+              name='amount'
+              rules={[{ required: true, message: 'Enter an amount' }]}
+              {...(view.kind === 'invalid-amount' && {
+                validateStatus: 'error',
+                help: `That isn't a valid ${merchant.currency} amount`,
+              })}
+            >
               <InputNumber min={0.01} precision={2} style={{ width: '100%' }} placeholder='0.00' />
             </Form.Item>
 
@@ -139,7 +163,7 @@ export const NewPaymentPage = () => {
               label='Card number'
               name='cardNumber'
               normalize={formatCardNumber}
-              extra={card && describeCard(card.network, card.cardType)}
+              extra={cardQuote && describeCard(cardQuote.network, cardQuote.cardType)}
               rules={[
                 { required: true, message: 'Enter the card number' },
                 {
@@ -193,10 +217,14 @@ export const NewPaymentPage = () => {
               size='large'
               block
               loading={submitting}
-              disabled={submitting || blockedByUnknown}
-              aria-describedby={blockedByUnknown ? 'unknown-outcome' : undefined}
+              disabled={submitting || !canCharge}
+              aria-describedby={[
+                blockedByUnknown && 'unknown-outcome',
+                view.kind === 'error' && 'quote-error',
+                note && 'summary-note',
+              ].filter(Boolean).join(' ') || undefined}
             >
-              Charge {formatMoney(total, merchant.currency)}
+              {view.kind === 'ready' ? `Charge ${quoteMoney(view.quote, view.quote.totalMinor)}` : 'Charge'}
             </Button>
           </Form>
         </Card>
@@ -204,14 +232,31 @@ export const NewPaymentPage = () => {
 
       <Col xs={24} md={10}>
         <Card title='Summary'>
-          <dl className='summary'>
-            <dt>Amount</dt>
-            <dd>{formatMoney(amount, merchant.currency)}</dd>
-            <dt>Card surcharge ({merchant.surchargeRate}%)</dt>
-            <dd>{formatMoney(surcharge, merchant.currency)}</dd>
-            <dt className='summary-total'>Total</dt>
-            <dd className='summary-total'>{formatMoney(total, merchant.currency)}</dd>
-          </dl>
+          {view.kind === 'error' &&
+            <Alert
+              type='error'
+              showIcon
+              message="Couldn't work out the total"
+              description={<span id='quote-error'>{errorMessage(view.error)}</span>}
+              action={<Button size='small' onClick={requote}>Try again</Button>}
+              style={{ marginBottom: 16 }}
+            />
+          }
+          {view.kind === 'ready'
+            ? <dl className='summary'>
+                <dt>Amount</dt>
+                <dd>{quoteMoney(view.quote, view.quote.amountMinor)}</dd>
+                <dt>{surchargeLabel(view.quote)}</dt>
+                <dd>{quoteMoney(view.quote, view.quote.surchargeMinor)}</dd>
+                <dt className='summary-total'>Total</dt>
+                <dd className='summary-total'>{quoteMoney(view.quote, view.quote.totalMinor)}</dd>
+              </dl>
+            : <dl className='summary'>
+                <dt>Amount</dt>
+                <dd>{formatMoney(amount ?? 0, merchant.currency)}</dd>
+              </dl>
+          }
+          {note && <Text id='summary-note' type='secondary' style={{ display: 'block', marginTop: 12 }}>{note}</Text>}
         </Card>
       </Col>
     </Row>

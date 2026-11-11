@@ -32,6 +32,8 @@ type RequestOptions = {
   body?: unknown
   timeoutMs?: number
   retries?: number
+  /** Cancels the request, including any retries. */
+  signal?: AbortSignal
 }
 
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === 'AbortError'
@@ -52,11 +54,14 @@ const readError = async (res: Response) => {
 }
 
 export const request = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
-  const { method = 'GET', body, timeoutMs = READ_TIMEOUT_MS, retries = READ_RETRIES } = options
+  const { method = 'GET', body, timeoutMs = READ_TIMEOUT_MS, retries = READ_RETRIES, signal } = options
 
   for (let attempt = 0; ; attempt++) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const cancel = () => controller.abort()
+    signal?.addEventListener('abort', cancel)
+    if (signal?.aborted) cancel()
 
     try {
       const res = await fetch(`/api${path}`, {
@@ -71,9 +76,11 @@ export const request = async <T>(path: string, options: RequestOptions = {}): Pr
       }
       return await res.json() as T
     } catch (e) {
-      if (attempt >= retries || !isTransient(e)) throw e
+      // A caller's cancel looks like a timeout, but must not be retried
+      if (signal?.aborted || attempt >= retries || !isTransient(e)) throw e
     } finally {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', cancel)
     }
   }
 }

@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Descriptions, Popconfirm, Result, Space, Spin, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { Link, useParams } from 'react-router-dom'
-import { ApiError, errorMessage, isOutcomeUnknown } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
 import { getPayment, Payment, refundPayment } from '../api/payments'
 import { CardLabel } from '../components/CardLabel'
 import { StatusTag } from '../components/StatusTag'
+import { classifyWriteError } from '../payments/writeErrors'
 import { formatMinorUnits, formatMoney } from '../utils/money'
 
 const { Text } = Typography
@@ -43,8 +44,9 @@ export const PaymentDetailPage = () => {
       setPayment(await refundPayment(id))
       message.success('Payment refunded')
     } catch (e) {
-      if (isOutcomeUnknown(e)) setUnknownRefundAt(new Date())
-      else message.error(errorMessage(e))
+      const failure = classifyWriteError(e)
+      if (failure.kind === 'unknown') setUnknownRefundAt(new Date())
+      else message.error(failure.message)
     } finally {
       setRefunding(false)
     }
