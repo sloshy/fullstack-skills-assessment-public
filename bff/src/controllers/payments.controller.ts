@@ -11,16 +11,21 @@ import {
 } from '../services/paymentsApiProxy';
 import { ResponseCache } from '../services/responseCache';
 
+/**
+ * Cache of payment list pages. Entries are grouped by merchant so a create or refund can drop
+ * just that merchant's pages.
+ */
 // Every terminal loads the list first, and it's the slowest query the payments API has.
-// Entries are grouped by merchant so a create or refund can drop just that merchant's pages.
 const paymentListCache = new ResponseCache<unknown>(config.paymentListCacheTtlMs, config.paymentListCacheMaxEntries);
 
-// The only parameters the payments API's list takes (PaymentsController.List)
+/** The only parameters the payments API's list takes (PaymentsController.List). */
 const LIST_PARAMS = ['page', 'pageSize'] as const;
 
-// The allow-listed parameters from the raw URL, in a fixed order and first value only, so
-// ?pageSize=10&page=2 and ?page=2&pageSize=10 share an entry and junk parameters can't mint
-// new keys. The same string goes upstream, so the key always matches what was fetched.
+/**
+ * The allow-listed parameters from the raw URL, in a fixed order and first value only, so
+ * ?pageSize=10&page=2 and ?page=2&pageSize=10 share an entry and junk parameters can't mint
+ * new keys. The same string goes upstream, so the key always matches what was fetched.
+ */
 function normalisedQuery(req: AuthenticatedRequest): string {
   const queryStart = req.originalUrl.indexOf('?');
   const raw = new URLSearchParams(queryStart === -1 ? '' : req.originalUrl.slice(queryStart + 1));
@@ -32,10 +37,12 @@ function normalisedQuery(req: AuthenticatedRequest): string {
   return params.toString();
 }
 
+/**
+ * The list cache key: the merchant (for invalidation) and a hash of the API key, so an entry is
+ * only ever served to the key that filled it. The raw key is never stored.
+ */
 // INC-4486: the key used to be the URL alone, so every merchant shared one entry per URL.
-// It now holds the merchant (for invalidation) and a hash of the API key, so an entry is only
-// ever served to the key that filled it. A revoked or wrong key can't read a cached page: its
-// own lookup goes upstream and gets the 401. The raw key is never stored.
+// A revoked or wrong key can't read a cached page: its own lookup goes upstream and gets the 401.
 function listCacheKey(merchantId: string, apiKey: string, query: string): string {
   return JSON.stringify([merchantId, hashApiKey(apiKey), query]);
 }
@@ -61,6 +68,9 @@ export async function fetchPayments(req: AuthenticatedRequest, res: Response): P
   sendUpstreamResponse(res, status, body);
 }
 
+/**
+ * The URL-encoded payment ID from the route, or `undefined` after sending a 400 for "." or "..".
+ */
 // encodeURIComponent leaves "." and ".." alone, and the URL parser then resolves them as path
 // segments: /payments/%2E%2E/refund would reach /api/refund. Reject them before proxying.
 function paymentIdOrReject(req: AuthenticatedRequest, res: Response): string | undefined {
@@ -88,6 +98,10 @@ export async function refundPayment(req: AuthenticatedRequest, res: Response): P
   await postAndInvalidate(req, res, `/payments/${id}/refund`);
 }
 
+/**
+ * POSTs to the payments API and drops the merchant's cached list pages if the write succeeded
+ * or its outcome is unknown.
+ */
 // The list changes only when the write succeeded, and then for that merchant only. Invalidate
 // before responding so the terminal's next list request sees the change. If the outcome is
 // unknown (504 payment_outcome_unknown) the payment may exist, so invalidate then too.

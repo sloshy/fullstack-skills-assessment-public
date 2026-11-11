@@ -10,14 +10,21 @@ function forwardedHeaders(req: AuthenticatedRequest): Record<string, string> {
   };
 }
 
-// The payments API may have charged the card (it doesn't cancel when we give up), so the
-// client must check the payments list rather than retry
+/**
+ * Error code for a write whose outcome is unknown. The payments API may have charged the card
+ * (it doesn't cancel when we give up), so the client must check the payments list rather than
+ * retry.
+ */
 export const PAYMENT_OUTCOME_UNKNOWN = 'payment_outcome_unknown';
 
-// Failures where the request can't have reached the payments API: the error codes, and only
-// while resolving or connecting. ENETUNREACH/EHOSTUNREACH on an established socket (syscall
-// read/write) may come after the request went out, so those don't count.
+/**
+ * Error codes of failures where the request can't have reached the payments API, but only
+ * while resolving or connecting (see {@link NOT_SENT_SYSCALLS}).
+ */
 const NOT_SENT_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH']);
+/** The resolving and connecting syscalls: the only ones where {@link NOT_SENT_CODES} count. */
+// ENETUNREACH/EHOSTUNREACH on an established socket (syscall read/write) may come after the
+// request went out, so those don't count.
 const NOT_SENT_SYSCALLS = new Set(['connect', 'getaddrinfo']);
 
 interface SystemErrorLike {
@@ -32,6 +39,7 @@ function isPreSendError(e: SystemErrorLike): boolean {
   );
 }
 
+/** Whether a fetch error means the request can't have reached the payments API. */
 // fetch puts the system error in `cause`. With several addresses (happy eyeballs) the cause is
 // an AggregateError of one error per attempt; then every attempt must have failed before sending.
 function wasNeverSent(err: unknown): boolean {
@@ -41,8 +49,10 @@ function wasNeverSent(err: unknown): boolean {
   return attempts.every((attempt) => typeof attempt === 'object' && attempt !== null && isPreSendError(attempt));
 }
 
-// A gateway or load balancer answering for the payments API (its own HTML page): the request
-// may have reached the payments API before the gateway gave up
+/**
+ * Statuses of a gateway or load balancer answering for the payments API (its own HTML page):
+ * the request may have reached the payments API before the gateway gave up.
+ */
 const GATEWAY_STATUSES = new Set([502, 503, 504]);
 
 function failure(method: string, path: string, problem: string, outcomeUnknown: boolean): UpstreamError {
@@ -55,14 +65,21 @@ function failure(method: string, path: string, problem: string, outcomeUnknown: 
   return outcomeUnknown ? new UpstreamError(504, PAYMENT_OUTCOME_UNKNOWN) : new UpstreamError(502, 'upstream_error');
 }
 
-// For callers that need the body rather than piping it to res. path is relative to /api.
-// GET is a read (PAYMENTS_API_TIMEOUT_MS); anything else is a non-idempotent write
-// (PAYMENTS_API_WRITE_TIMEOUT_MS). Any HTTP status is returned to the caller as is. Otherwise:
-// - a read that fails (network, timeout, body that isn't JSON) throws UpstreamError(502);
-// - a write that fails after it may have reached the payments API (a timeout, a dropped
-//   connection, a 2xx we can't read, or a gateway's non-JSON 502/503/504 page) throws
-//   UpstreamError(504, payment_outcome_unknown); one that can't have been sent (DNS failure,
-//   connection refused while connecting) or another non-JSON error status is 502.
+/**
+ * Calls the payments API, for callers that need the body rather than piping it to res.
+ *
+ * GET is a read (PAYMENTS_API_TIMEOUT_MS); anything else is a non-idempotent write
+ * (PAYMENTS_API_WRITE_TIMEOUT_MS).
+ *
+ * @param path relative to /api
+ * @returns the status as is with the parsed JSON body (`undefined` if empty)
+ * @throws UpstreamError(502) for a read that fails (network, timeout, body that isn't JSON), or
+ * a write that can't have been sent (DNS failure, connection refused while connecting) or
+ * that got another non-JSON error status.
+ * @throws UpstreamError(504, payment_outcome_unknown) for a write that fails after it may have
+ * reached the payments API (a timeout, a dropped connection, a 2xx we can't read, or a
+ * gateway's non-JSON 502/503/504 page).
+ */
 export async function fetchFromPaymentsApi(
   req: AuthenticatedRequest,
   path: string,

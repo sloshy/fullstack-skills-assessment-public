@@ -4,18 +4,22 @@ interface CacheEntry<T> {
   group?: string;
 }
 
-// Opaque token from generation(): which invalidations a value has seen
+/** Opaque token from generation(): which invalidations a value has seen. */
 export interface CacheGeneration {
-  readonly epoch: number; // bumped by clear()
-  readonly group: number; // bumped by deleteGroup()
+  /** Bumped by clear(). */
+  readonly epoch: number;
+  /** Bumped by deleteGroup(). */
+  readonly group: number;
 }
 
 export interface SetOptions {
-  // Entries in a group can be dropped together with deleteGroup
+  /** Entries in a group can be dropped together with deleteGroup. */
   group?: string;
-  // The group's generation, read before the upstream call that produced the value. If the
-  // group (or the whole cache) has been invalidated since, the value may predate that change,
-  // so it isn't stored.
+  /**
+   * The group's generation, read before the upstream call that produced the value. If the
+   * group (or the whole cache) has been invalidated since, the value may predate that change,
+   * so it isn't stored.
+   */
   generation?: CacheGeneration;
 }
 
@@ -81,8 +85,9 @@ export class ResponseCache<T> {
     return this.groupGenerations.get(group) ?? 0;
   }
 
+  /** Drops expired entries, at most once per ttl. */
   // Keys that are never read again would otherwise stay in the map until pushed out.
-  // Sweeps at most once per ttl, so a burst of sets stays cheap.
+  // At most once per ttl so a burst of sets stays cheap.
   private sweepExpired(): void {
     const now = Date.now();
     if (now < this.nextSweepAt) return;

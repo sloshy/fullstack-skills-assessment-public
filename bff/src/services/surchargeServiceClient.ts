@@ -2,7 +2,10 @@ import { config } from '../config';
 import { describeError } from '../logger';
 import { FallbackReason, SurchargeServiceQuote } from '../types';
 
-// docs/quote-contract.md, "POST /api/surcharge/quote". Never throws: every outcome is one of these.
+/**
+ * Result of {@link fetchQuote} (docs/quote-contract.md, "POST /api/surcharge/quote"). fetchQuote
+ * never throws: every outcome is one of these.
+ */
 export type QuoteOutcome =
   // A 2xx with a body that passed the required-field check. Unknown fields are kept.
   | { kind: 'quote'; quote: SurchargeServiceQuote & Record<string, unknown> }
@@ -13,7 +16,7 @@ export type QuoteOutcome =
 
 type JsonType = 'string' | 'number' | 'integer' | 'boolean' | 'string|null';
 
-// Every field in the contract's response table, with its JSON type. Enum values aren't checked.
+/** Every field in the contract's response table, with its JSON type. Enum values aren't checked. */
 const REQUIRED_FIELDS: Record<keyof SurchargeServiceQuote, JsonType> = {
   merchantId: 'string',
   currency: 'string',
@@ -51,7 +54,11 @@ function hasType(value: unknown, type: JsonType): boolean {
   }
 }
 
-// Returns the first field that is missing or has the wrong type, or undefined if the body is complete
+/**
+ * Checks a quote body against {@link REQUIRED_FIELDS}.
+ *
+ * @returns the first field that is missing or has the wrong type, or `undefined` if the body is complete
+ */
 export function findInvalidQuoteField(body: unknown): string | undefined {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return '(body is not an object)';
   const record = body as Record<string, unknown>;
@@ -61,8 +68,8 @@ export function findInvalidQuoteField(body: unknown): string | undefined {
   return undefined;
 }
 
-// AbortSignal.timeout rejects fetch with a DOMException named TimeoutError. Checked by name,
-// not instanceof, because DOMException isn't guaranteed to share our realm's Error.
+/** Whether fetch was rejected by AbortSignal.timeout (a DOMException named TimeoutError). */
+// Checked by name, not instanceof, because DOMException isn't guaranteed to share our realm's Error.
 function isTimeout(err: unknown): boolean {
   const e = err as { name?: unknown; cause?: { name?: unknown } } | null;
   return e?.name === 'TimeoutError' || e?.cause?.name === 'TimeoutError';

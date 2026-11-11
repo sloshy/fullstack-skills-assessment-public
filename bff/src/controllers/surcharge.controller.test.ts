@@ -11,7 +11,7 @@ const MERCHANTS: Record<string, { id: string; name: string; currency: string; su
   [EUR_KEY]: { id: 'mer_009', name: 'Euro Test', currency: 'EUR', surchargeRate: 2 },
 };
 
-// A signed quote as docs/quote-contract.md describes it (INC-4471's payment)
+/** A signed quote as docs/quote-contract.md describes it (INC-4471's payment). */
 const QUOTE = {
   merchantId: 'mer_002',
   currency: 'USD',
@@ -44,7 +44,7 @@ function fetchResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status });
 }
 
-// Never answers; rejects with the signal's reason when the timeout aborts it, like real fetch
+/** Never answers; rejects with the signal's reason when the timeout aborts it, like real fetch. */
 function hangingFetch(_url: URL, opts: RequestInit): Promise<Response> {
   return new Promise((_resolve, reject) => {
     opts.signal?.addEventListener('abort', () => reject(opts.signal?.reason));

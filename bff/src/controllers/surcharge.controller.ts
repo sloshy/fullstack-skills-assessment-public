@@ -7,8 +7,11 @@ import { AuthenticatedRequest, FallbackReason, FallbackSurchargeQuote, Merchant,
 
 const BIN_PATTERN = /^\d{8}$/;
 
-// Without the merchant there's no currency to fall back with, so this can't fall back:
-// a bad key stays 401 and every other failure is 502 upstream_error.
+/**
+ * Looks up the merchant for a quote: a bad key stays 401 and every other failure is
+ * 502 upstream_error.
+ */
+// Without the merchant there's no currency to fall back with, so this can't fall back.
 async function merchantForQuote(req: AuthenticatedRequest): Promise<Merchant> {
   try {
     return await getMerchant(req);
@@ -18,9 +21,12 @@ async function merchantForQuote(req: AuthenticatedRequest): Promise<Merchant> {
   }
 }
 
-// Preview for the terminal (docs/quote-contract.md). The terminal sends the quote back with the
-// payment, so the signed fields must arrive intact. A surcharge problem never blocks a payment
-// (DECISIONS.md 008): if the service can't quote, the answer is an explicit "no surcharge".
+/**
+ * Surcharge preview for the terminal (docs/quote-contract.md). If the service can't quote, the
+ * answer is an explicit "no surcharge".
+ */
+// The terminal sends the quote back with the payment, so the signed fields must arrive intact.
+// A surcharge problem never blocks a payment (DECISIONS.md 008), hence the fallback.
 export async function quoteSurcharge(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { amount, bin } = req.body ?? {};
   // JSON.parse turns 1e999 into Infinity, so finiteness needs checking too

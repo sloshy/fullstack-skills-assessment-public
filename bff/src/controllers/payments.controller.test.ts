@@ -3,7 +3,8 @@ import { Express } from 'express';
 
 const HARBOR_KEY = 'sk_test_harbor_8d1e6b03c7';
 const COASTAL_KEY = 'sk_test_coastal_51f0a9e2d4';
-const HARBOR_SECOND_KEY = 'sk_test_harbor_frontdesk_2'; // another key for the same merchant
+/** Another key for the same merchant. */
+const HARBOR_SECOND_KEY = 'sk_test_harbor_frontdesk_2';
 const BAD_KEY = 'sk_test_revoked_0000000000';
 
 const HARBOR = { id: 'mer_002', name: 'Harbor Dental Group', currency: 'USD', surchargeRate: 2.5 };
@@ -13,7 +14,7 @@ const MERCHANTS: Record<string, { id: string; name: string; currency: string; su
   [COASTAL_KEY]: { id: 'mer_001', name: 'Coastal Coffee', currency: 'USD', surchargeRate: 3 },
 };
 
-// Each merchant's own page, so a leak shows up as the wrong merchant's items
+/** Each merchant's own page, so a leak shows up as the wrong merchant's items. */
 function pageFor(merchantId: string) {
   return { items: [{ id: `pay_${merchantId}`, merchantId }], page: 1, pageSize: 25, totalCount: 1 };
 }
@@ -31,8 +32,10 @@ function apiKeyOf(opts: RequestInit | undefined): string {
   return ((opts?.headers ?? {}) as Record<string, string>)['X-Api-Key'];
 }
 
-// A payments API that knows two keys, answers 401 for anything else, and serves each
-// merchant only its own payments
+/**
+ * A payments API that knows two keys, answers 401 for anything else, and serves each
+ * merchant only its own payments.
+ */
 async function fakePaymentsApi(url: URL, opts?: RequestInit): Promise<Response> {
   const merchant = MERCHANTS[apiKeyOf(opts)];
   if (!merchant) return fetchResponse(401, { error: 'Invalid API key' });
@@ -254,7 +257,7 @@ describe('cache invalidation', () => {
 });
 
 describe('write timeouts (charges are not cancelled upstream)', () => {
-  // Answers after delayMs, or rejects with the signal's reason if the timeout fires first
+  /** Answers after delayMs, or rejects with the signal's reason if the timeout fires first. */
   function slowCreate(delayMs: number, status = 201) {
     return (url: URL, opts?: RequestInit): Promise<Response> => {
       if (!(url.pathname === '/api/payments' && opts?.method === 'POST')) return fakePaymentsApi(url, opts);
@@ -317,7 +320,7 @@ describe('write timeouts (charges are not cancelled upstream)', () => {
     expect(listCalls(HARBOR_KEY)).toHaveLength(2);
   });
 
-  // Shaped like Node's system errors, which fetch puts in `cause`
+  /** Shaped like Node's system errors, which fetch puts in `cause`. */
   function systemError(code: string, syscall: string) {
     return Object.assign(new Error(`${syscall} ${code}`), { code, syscall });
   }

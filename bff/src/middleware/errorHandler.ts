@@ -4,10 +4,10 @@ import { UpstreamError } from '../types';
 
 interface Classified {
   status: number;
-  // What the client sees
+  /** What the client sees. */
   clientMessage: string;
-  // What the log sees. Never the message of an error we didn't write: body-parser's
-  // SyntaxError quotes raw body text, which can be card digits.
+  /** What the log sees. Never the message of an error we didn't write. */
+  // body-parser's SyntaxError quotes raw body text, which can be card digits.
   logMessage: string;
 }
 

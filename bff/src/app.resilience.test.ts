@@ -9,8 +9,8 @@ const HARBOR = { id: 'mer_002', name: 'Harbor Dental Group', currency: 'USD', su
 
 type Route = [method: 'get' | 'post', path: string, body?: object];
 
-// [route, status for a 200 whose body isn't JSON]. A write that got a 2xx went through, so its
-// outcome is unknown rather than an upstream error.
+/** [route, status for a 200 whose body isn't JSON]. */
+// A write that got a 2xx went through, so its outcome is unknown rather than an upstream error.
 const ROUTES: [...Route, number][] = [
   ['get', '/api/merchants/me', undefined, 502],
   ['get', '/api/payments?page=1', undefined, 502],
@@ -34,7 +34,7 @@ function send([method, path, body]: Route) {
   return body ? req.send(body) : req;
 }
 
-// Lets any stray rejection from the request surface before we check for it
+/** Lets any stray rejection from the request surface before we check for it. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 beforeAll(() => {

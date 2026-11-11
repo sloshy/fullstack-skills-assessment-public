@@ -8,27 +8,34 @@ type Exit = (code: number) => void;
 
 export const FORCED_EXIT_AFTER_MS = 10_000;
 
-// Stop taking new connections, let in-flight requests finish, then exit. If connections
-// don't drain in time, exit anyway.
+/**
+ * Stops taking new connections, lets in-flight requests finish, then exits. If connections
+ * don't drain within {@link FORCED_EXIT_AFTER_MS}, exits anyway.
+ */
 function closeThenExit(server: Closable, exit: Exit, code: number): void {
   setTimeout(() => exit(code === 0 ? 1 : code), FORCED_EXIT_AFTER_MS).unref();
   server.close(() => exit(code));
 }
 
-// unhandledRejection: log and keep running. Every route handler is wrapped (asyncHandler), so
-// a rejection here is a promise nobody awaited, not a broken request. Exiting would turn one
-// forgotten wrapper into INC-4493 again (every terminal down). The event field is for alerting.
+/** Creates the unhandledRejection handler: log and keep running. */
+// Every route handler is wrapped (asyncHandler), so a rejection here is a promise nobody
+// awaited, not a broken request. Exiting would turn one forgotten wrapper into INC-4493 again
+// (every terminal down).
 export function createUnhandledRejectionHandler() {
   return (reason: unknown): void => {
     logEvent('ERROR', 'processGuards', `Unhandled promise rejection: ${describeError(reason)}`, {
+      // The event field is for alerting
       event: 'unhandled_rejection',
       stack: reason instanceof Error ? reason.stack : undefined,
     });
   };
 }
 
-// uncaughtException: the process state can't be trusted after a synchronous throw escaped,
-// so log it, drain and exit non-zero so the orchestrator restarts us.
+/**
+ * Creates the uncaughtException handler: log it, drain and exit non-zero so the orchestrator
+ * restarts us.
+ */
+// The process state can't be trusted after a synchronous throw escaped.
 export function createUncaughtExceptionHandler(server: Closable, exit: Exit = process.exit) {
   let shuttingDown = false;
 
@@ -43,7 +50,8 @@ export function createUncaughtExceptionHandler(server: Closable, exit: Exit = pr
   };
 }
 
-// SIGTERM / SIGINT: graceful, but bounded, so a hung connection can't block a deploy
+/** Creates the SIGTERM / SIGINT handler: graceful, but bounded. */
+// Bounded so a hung connection can't block a deploy.
 export function createShutdownHandler(server: Closable, exit: Exit = process.exit) {
   let shuttingDown = false;
 
