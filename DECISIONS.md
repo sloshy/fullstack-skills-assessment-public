@@ -349,10 +349,11 @@ gateway already supports idempotency keys (`IPaymentGateway.cs`).
 
 **Decision:** (A) for Phase 2. (C) is the intended long-term fix (Task 7
 #3), and (B) is rejected. This is **pending confirmation from a payments
-domain expert**. The brief for them covers the industry patterns
+domain expert**. The research behind it is in
+`docs/unknown-payment-outcomes.md`: the industry patterns
 (idempotency-key retries, a status check before retrying, automatic
-timeout reversal), our gaps and their open questions; it's kept outside the
-repo as a shared doc.
+timeout reversal), our gaps and the open questions. It draws on public
+documentation only, so it isn't expert confirmation.
 **Why:** Every established pattern exists to prevent a second
 independent charge after an unknown outcome. Without a key, "charge again"
 is exactly that. Checking the payments list is the manual equivalent of a
