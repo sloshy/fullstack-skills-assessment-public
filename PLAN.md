@@ -1,5 +1,9 @@
 # Plan of attack
 
+> **Status:** the working plan, kept as written; where it differs from
+> what was built, `DECISIONS.md` and `NOTES.md` win. All phases, 0
+> through 4, are done.
+
 Working plan for the assessment. Track: Scala (see `DECISIONS.md` 001). Every
 phase ends with an adversarial review subagent, then a commit message drafted
 for the candidate's approval (`DECISIONS.md` 005). Parallel phases run in their

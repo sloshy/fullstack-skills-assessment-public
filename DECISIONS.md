@@ -104,16 +104,17 @@ rejected.
   and doesn't re-quote. The Scala/BFF side of this contract is implemented;
   the payments API side is C#, so it is specified in `NOTES.md`.
 - **Slow fails fast.** The preview quote has a short time limit (about
-  1–1.5 s) and a circuit breaker, so a struggling surcharge service can't
-  add latency to every preview.
+  1–1.5 s) ~~and a circuit breaker~~, so a struggling surcharge service can't
+  add latency to every preview. *Amended:* the circuit breaker was cut for
+  time. The 1.5 s timeout plus the fallback stand (`NOTES.md` Task 5).
 - **The terminal says what's happening:** "Surcharge unavailable, no
   surcharge will be applied", so the figure shown is literally true.
 - **Each cause gets its own reason code** (`UNKNOWN_BIN`, `TIMEOUT`,
   `UNAVAILABLE`, `UNKNOWN_MERCHANT`; a lookup failure inside the service
   surfaces as `UNAVAILABLE`), recorded on the payment. Only the last three
   count as fallbacks for alerting. Alerts
-  fire on the fallback rate and its value per merchant, circuit-breaker
-  opens, unknown-merchant quotes (a config fault, higher priority), BFF
+  fire on the fallback rate and its value per merchant, ~~circuit-breaker
+  opens,~~ unknown-merchant quotes (a config fault, higher priority), BFF
   5xx/restarts, and a synthetic quote check.
 - ~~**Quote IDs aren't signed for now.**~~ Superseded by 009: an unsigned
   binding would let a client claim *any* surcharge, not just fake a
@@ -222,9 +223,9 @@ on config faults that would otherwise mis-price every payment.
 
 **Decision:**
 - **Longer input stays lenient:** 8 to 19 digits after removing spaces and
-  dashes, with the first 8 used. That's today's behaviour, except that
-  today there's no 19-digit cap and letters are silently stripped. It's now written
-  into the spec and covered by tests.
+  dashes, with the first 8 used. That's the original behaviour, except
+  that originally there was no 19-digit cap and letters were silently
+  stripped. It's now written into the spec and covered by tests.
 - **Fewer than 8 digits, or non-digits, gets `400 invalid_bin`,** on both
   `/v1/quotes` and `/v1/bins`. There's no zero-padding. No real payment can
   hit this, because both callers send 8 digits; in the terminal it means
@@ -244,6 +245,7 @@ Lenient handling of longer input keeps the availability stance of 008.
 - **Key:** `merchantId` + SHA-256 of the API key + the normalised (sorted)
   query string. The raw key is never stored in a key or logged.
 - **Invalidation:** per merchant, on a successful create or refund only.
+  *Amended by 014:* also on `504 payment_outcome_unknown`.
 **Why:**
 - **One key per merchant.** `Merchant.ApiKey` is a single, unique column
   (`payments-api/.../Data/Merchant.cs:7,21`), and every terminal of a

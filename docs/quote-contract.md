@@ -5,6 +5,11 @@ payments API for surcharge quotes. It is fixed before the parallel work starts
 (`PLAN.md` Phase 0.5). Background: `DECISIONS.md` 008 (a surcharge problem
 never blocks a payment) and 009 (signed quotes).
 
+> Written before implementation. Where it says "today", it means the
+> original code before Phase 1; the surcharge service, BFF and terminal now
+> implement this contract. The payments API side (C#) is specified here and
+> in `NOTES.md` but not built.
+
 **Compatibility:**
 - Additive by design: existing request and response fields keep their
   names, types and meaning, and new fields are added alongside them. The
@@ -145,8 +150,9 @@ in the table that applies wins.
 ## `GET /v1/bins/:bin` (surcharge service)
 
 The same BIN rule applies: only digits, 8 to 19 of them, first 8 used, no
-zero-padding. Fewer than 8 digits gets `400 {"error":"invalid_bin"}`. Today
-it accepts 6 or 7 digits and pads them with `0`s (`BinController.scala:13`).
+zero-padding. Fewer than 8 digits gets `400 {"error":"invalid_bin"}`.
+Originally it accepted 6 or 7 digits and padded them with `0`s
+(`BinController.scala:13`).
 Responses are otherwise unchanged.
 
 ## `POST /api/surcharge/quote` (BFF → terminal)
@@ -172,9 +178,9 @@ already enforces `^\d{8}$` (400).
   the object back as `quote`, so it must arrive intact.
 - Before any upstream call, the BFF itself rejects a request whose `amount`
   isn't a number > 0, or whose `bin` isn't `^\d{8}$`, with `400` (unchanged).
-- Today the BFF test asserts that `currency` is removed
+- The original BFF test asserted that `currency` was removed
   (`surcharge.controller.test.ts:54`). That test and the web
-  `SurchargeQuote` type change with this.
+  `SurchargeQuote` type were changed with this.
 
 **Fallback (`DECISIONS.md` 008):**
 - **When:** a timeout (`SURCHARGE_QUOTE_TIMEOUT_MS`, default `1500`), a
@@ -286,21 +292,24 @@ change to an existing response:
 | Amount above `2^53 − 1` minor units | `200` | `422 invalid_amount` |
 | BFF quote when `getMerchant` gets a payments API `5xx` | that status passed through (`UpstreamError`) | `502 upstream_error` |
 
-- **Effect on the payments API:** it accepts JPY amounts with decimals
-  today. The web `InputNumber` uses `precision={2}` for every currency.
-  Those payments now get a `422` from the quote, and `SurchargeClient` then
-  charges them **without** a surcharge (fail-open) and logs a warning.
-  Phase 2 fixes the terminal's JPY input. The C# validation is described in
+- **Effect on the payments API:** it accepts JPY amounts with decimals.
+  The original terminal let them through (its amount input used
+  `precision={2}` for every currency). Such a payment gets a `422` from
+  the quote, and `SurchargeClient` then charges it **without** a surcharge
+  (fail-open) and logs a warning. The terminal now refuses them
+  (`DECISIONS.md` 017), and the C# validation is described in
   `NOTES.md`.
 - **Replay:** a signed quote can be reused within its 300 s for the same
   merchant, amount and BIN. That gives the same figures a fresh quote
-  would. The only difference is a rate change or opt-out inside the window
-  (longer still if Phase 3 caches merchant config). Duplicate charges are
+  would. The only difference is a rate change or opt-out inside the window.
+  The surcharge service also caches merchant config for up to 30 s
+  (`MERCHANT_CACHE_TTL`), so an opt-out can take up to 30 s to reach new
+  quotes, plus up to 300 s for quotes already issued. Duplicate charges are
   the separate idempotency problem (Task 7).
 
 ## Load test note
 
-`scripts/load-test.mjs` sends 2-decimal amounts to `mer_003` (JPY). Under
-this contract those get `422`, so the script needs to send whole yen for
-`mer_003` before any measurement after Phase 1A. The Phase 0 baseline is
-unaffected: it ran against the old service, which accepted them.
+`scripts/load-test.mjs` originally sent 2-decimal amounts to `mer_003`
+(JPY), which this contract rejects with `422`. It now sends whole yen for
+`mer_003` (`c85c097`). The Phase 0 baseline is unaffected: it ran against
+the old service, which accepted them.

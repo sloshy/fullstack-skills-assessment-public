@@ -131,12 +131,29 @@ Any future expiry date and any CVV.
 | `web/` | `npm run dev` | Dev server on :5173, proxies `/api` to the BFF on :3001 |
 | `web/` | `npm test`, `npm run lint`, `npm run build` | Tests, lint and type-check, build |
 | `bff/` | `npm run dev` | BFF on :3001, restarts on change |
-| `bff/` | `npm test`, `npm run lint`, `npm run build` | Tests, type-check, build |
+| `bff/` | `npm test`, `npm run lint`, `npm run build` | Tests, type-check and lint (ESLint), build |
 | `payments-api/` | `dotnet test` | Unit and API tests |
 | `payments-api/` | `GET http://localhost:5080/dev/gateway/charges` | The simulated gateway's ledger: every charge it's captured |
 | `surcharge-service/` | `sbt test` | Tests |
 | `surcharge-service/` | `GET http://localhost:9000/v1/bins/41111111` | Look up a BIN |
 | repo root | `node scripts/load-test.mjs` | Load test the surcharge service (options are at the top of the script) |
+
+## Configuration
+
+Everything has a working default, so `docker compose up`, `npm run dev` and
+`sbt run` need nothing set. These variables are read from the process
+environment. `docker-compose.yml` doesn't pass them through, so to change
+one under Docker, add it to that service's `environment:` there.
+
+| Service | Variable | Default | |
+| --- | --- | --- | --- |
+| `bff/` | `SURCHARGE_QUOTE_TIMEOUT_MS` | `1500` | How long a preview quote may take before the terminal falls back to "no surcharge" |
+| `bff/` | `PAYMENTS_API_TIMEOUT_MS` | `3000` | Timeout for reads from the payments API |
+| `bff/` | `PAYMENTS_API_WRITE_TIMEOUT_MS` | `30000` | Timeout for creating a payment or refund. Longer, because the payments API doesn't cancel a charge. |
+| `bff/` | `PAYMENT_LIST_CACHE_TTL_MS` | `10000` | Payments list cache lifetime |
+| `bff/` | `PAYMENT_LIST_CACHE_MAX_ENTRIES` | `1000` | Payments list cache size cap |
+| `surcharge-service/` | `MERCHANT_CACHE_TTL` | `30s` | How long merchant config is cached. Include a unit: a bare `30` is read as milliseconds. `0` turns the cache off. An opt-out or rate change takes up to this long to reach new quotes. |
+| `surcharge-service/` | `QUOTE_SIGNING_KEY`, `QUOTE_SIGNING_KEY_ID` | a development key, `dev-1` | Key for signing quotes (at least 32 bytes). The service logs a warning while the development default is in use. |
 
 ## Layout
 
