@@ -14,6 +14,7 @@ import services.{BinTable, MerchantDirectory}
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.{Clock, Instant, ZoneOffset}
+import scala.concurrent.duration.Duration
 import scala.concurrent.{ExecutionContext, Future}
 
 class QuoteControllerSpec extends PlaySpec
@@ -320,7 +321,7 @@ class QuoteControllerSpec extends PlaySpec
 
 /** A merchant directory that knows one merchant, for configuration faults the fixture doesn't have. */
 class StubMerchants(merchant: MerchantConfig)
-  extends MerchantDirectory(null)(ExecutionContext.global) {
+  extends MerchantDirectory(null, Duration.Zero, () => 0L)(ExecutionContext.global) {
   override def find(merchantId: String): Future[Option[MerchantConfig]] =
     Future.successful(Some(merchant).filter(_.merchantId == merchantId))
 }
