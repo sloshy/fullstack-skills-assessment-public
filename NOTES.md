@@ -36,12 +36,58 @@ Follow-ups:
 
 - **What I did myself.**
   - I made the design decisions. Each one is logged with its reasoning in
-    `DECISIONS.md`, including several where I overruled or redirected the
-    first proposal: fail open rather than block, signed quotes, lenient
-    BIN parsing.
-  - I approved every commit message.
+    `DECISIONS.md`. Several are where I pushed back on or redirected the
+    first proposal:
+    - **Fail open (008).** I argued that a surcharge problem should never
+      hold up a payment, and that failures should be caught by monitoring
+      instead. I also pushed back on rejecting payments with bad BINs:
+      rule 2 says "don't surcharge", not "don't take the payment".
+    - **Signed quotes (009).** I ruled out adding state to the payment
+      path, and asked for a design that doesn't break the existing APIs,
+      since the C# service gets no fixes in this exercise.
+    - **Lenient BIN parsing (011).** I questioned truncating card numbers
+      and asked what the documented BIN length is. I argued against a hard
+      block: a client bug that sends extra digits shouldn't halt payments.
+      So the leniency is now specified and tested.
+    - **List cache key (012).** I asked whether terminals share API keys
+      before we settled the key. They do: each merchant has one key for all
+      its terminals, so adding the key hash costs nothing in hit rate.
+    - **One commit per task (013).** I split the phase-sized commits we'd
+      planned, so each one can be explained on its own.
+    - **Doc comments (015).** Doc comments for declarations, `//` only for
+      why.
+    - **Unknown outcomes (016).** I asked for industry practice before
+      deciding, and wanted a domain expert to confirm the result. The
+      research is in `docs/unknown-payment-outcomes.md`. It isn't expert
+      confirmation, so 016 stays pending.
+  - I did the integration click-through myself. That's where I found the
+    amount field silently rewriting what I typed ("5.5" yen became 6,
+    "5fdfsd" became 5.00 dollars). I asked for a validation error instead,
+    and for it to be fixed now rather than listed, because it's dangerous
+    (017).
+  - Scope calls:
+    - Scala 3 and dependency upgrades are separate "more time" items.
+    - Property-based tests (I'm a proponent) and the missing linters are
+      also "more time" items.
+    - BFF ESLint is its own commit.
+    - `NOTES.md` has a short section for each task, not just Tasks 1
+      and 2.
+  - I wrote `REVIEW.md` from Claude's review notes, reading the PR in my
+    editor. Claude filled in the later sections along the lines I'd
+    started, and I reviewed them. Along the way:
+    - I proposed doing the filtering in the database query, so the
+      separate list of every merchant's payments goes away. That simplified
+      the suggested fix.
+    - I turned down a fuller rewrite (grouping in SQL) as too much for a
+      review comment. Before mentioning it as a follow-up, I had it
+      benchmarked to see what it would gain.
+    - I asked where the refunded amount in minor units would come from. It
+      comes from the payment's status, since refunds are always full.
+    - I raised the `useEffect` data fetching against React's "You Might
+      Not Need an Effect" guidance.
+    - I recommended dropping the report cache rather than fixing its key.
+  - I approved every commit message, and trimmed one that was too detailed.
   - I reviewed the commits.
-  - I did the integration click-through myself.
 - **Agents and reviews.** I used Claude Code throughout.
   - Implementation went to agents in separate git worktrees.
   - Every change, code or docs, then went through a **separate review
