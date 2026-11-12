@@ -44,7 +44,7 @@ function normalisedQuery(req: AuthenticatedRequest): string {
 // INC-4486: the key used to be the URL alone, so every merchant shared one entry per URL.
 // A wrong key never reads a cached page: nothing was ever cached under its hash, so its lookup goes
 // upstream and gets the 401. A revoked key can still re-read the pages it filled itself until they
-// expire, because merchantService caches key → merchant without a TTL (NOTES.md Task 7 #5), but it
+// expire, because merchantService caches key → merchant without a TTL (NOTES.md Task 7 #4), but it
 // can never read another key's entries.
 function listCacheKey(merchantId: string, apiKey: string, query: string): string {
   return JSON.stringify([merchantId, hashApiKey(apiKey), query]);

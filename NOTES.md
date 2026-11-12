@@ -195,7 +195,7 @@ captured as 127100**.
 | `Contracts/Payments.cs` `CreatePaymentRequest` | Take `amount` as `decimal`, and accept the optional `quote` object | Exact amounts, and binding the charge to what was shown |
 | `PaymentService.cs:14` / `SurchargeClient` | Verify the quote instead of re-quoting: HMAC-SHA256 with `FixedTimeEquals`, a known `keyId`, unexpired with about 30 s of skew. The merchant, currency, BIN and amount must be the request's own. A zero surcharge with `totalMinor == amountMinor` is accepted unsigned, recording `reason`, with network and card type `UNKNOWN` unless signed. Anything else, including a missing quote, gets `409 quote_invalid`. | Rule 4, end to end |
 | `Program.cs:17` (`SurchargeClient` registration) | Interim, until the row above lands: give the client a timeout **below the BFF's 1.5 s** (it uses `HttpClient`'s 100 s default today) | Otherwise the terminal can show a "no surcharge" fallback while the payments API's slower re-quote succeeds and charges one (see Task 5) |
-| `Data/Payment.cs` and the contracts | Store money as integer minor units with the currency exponent, and migrate existing rows | `double` everywhere (Task 7 #4) |
+| `Data/Payment.cs` and the contracts | Store money as integer minor units with the currency exponent, and migrate existing rows | `double` everywhere (Task 7 #3) |
 | `Gateway/SimulatedGateway.cs:82` | Don't default an unknown currency to 2 decimals (`GetValueOrDefault(currency, 2)`). It only affects display today; charging already rejects unknown currencies. | The same silent-default pattern that caused the JPY bugs |
 | `PaymentService.cs:79,85` | Record the refunded **minor** amount actually sent to the gateway, not `payment.Total` | Receipts and reports drift from deposits |
 
@@ -625,20 +625,10 @@ In priority order, beyond what this submission fixes.
    the merchant; reads aren't. *Fix:* filter by the authenticated merchant
    and return 404, not 403, so the payment's existence isn't revealed.
    Add tests, and audit every endpoint for the same pattern.
-3. **Duplicate charges.** Creating a payment has no idempotency key.
-   Before this submission the web client also retried `POST /payments` on
-   timeout or 5xx (`web/src/api/client.ts:4,19-22` at `d866713`). We stop that and guard
-   against a double-click, but a page reload, a second terminal or an operator
-   re-charging can still create two charges. *Why it matters:* customers get charged two
-   or three times, the most visible kind of money harm and a source of
-   chargebacks. It's .NET Task 2, which this Scala-track submission doesn't
-   implement. *Fix:* the terminal generates an idempotency key once per
-   payment attempt. The payments API enforces it with a unique constraint
-   (merchant + key) and replays the stored response for a repeat, with a
-   conflict for the same key with a different body or one still in flight.
-   Clients never auto-retry non-idempotent requests without a key.
-4. **Money is stored and passed around as `double`.** C# `double`, SQLite
-   `REAL`, and JSON numbers through the BFF and web. *Why it matters:* the
+3. **Money is stored and passed around as `double`.** C# `double`, SQLite
+   `REAL`, and JSON numbers through the BFF and web. This is what's left
+   after Task 1, which fixes how the figures are calculated and charged,
+   not how they're stored. *Why it matters:* the
    Task 1 fix makes the figures exact where they're calculated and shown,
    and charging is only exact once the described C# change lands. Even
    then, the payments API stores and sums doubles. Refunds, reporting
@@ -647,7 +637,7 @@ In priority order, beyond what this submission fixes.
    exponent in the database and the API contracts, and migrate the
    existing rows. Add property tests that totals always equal the sum of
    their parts.
-5. **Merchant config is duplicated and partly never refreshed.**
+4. **Merchant config is duplicated and partly never refreshed.**
    - The surcharge rate and currency are held in two places, the payments
      API's merchants (`Data/seed.json`) and the surcharge service's
      `conf/merchants.json`, with nothing keeping them in step. They agree
@@ -665,6 +655,10 @@ In priority order, beyond what this submission fixes.
    breaks minor-unit amounts. *Fix:* one
    source of truth for merchant config, a TTL plus invalidation on change
    in the BFF, and a consistency check between the services.
+
+Duplicate charges are not ranked here because they're .NET Task 2, which
+this Scala-track submission doesn't implement (see `DECISIONS.md` 014 and
+016 for what the terminal and BFF do meanwhile).
 
 Smaller items noted but not ranked: health checks don't check dependencies,
 and there are no metrics or alerting (partly addressed under Task 5).
@@ -745,7 +739,7 @@ gateway (.NET Task 3 territory).
       cache never serves an entry across merchant or key.
   - **Payments API (FsCheck):** across any sequence of partial refunds,
     the total surcharge refunded never exceeds the surcharge charged
-    (rule 5). Task 7 #4 would also want "totals always equal the sum of
+    (rule 5). Task 7 #3 would also want "totals always equal the sum of
     their parts".
 - **Add component tests for the terminal.** The web app has Vitest but no
   DOM testing, so Phase 2 tests its logic as pure modules: quote state and

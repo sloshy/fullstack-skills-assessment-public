@@ -251,7 +251,7 @@ Lenient handling of longer input keeps the availability stance of 008.
   (`payments-api/.../Data/Merchant.cs:7,21`), and every terminal of a
   merchant uses it. So adding the key hash costs nothing in hit rate.
 - **It closes a revocation gap.** The BFF's merchant cache never expires
-  (Task 7 #5). With merchant-only keys, a rotated or revoked key would
+  (Task 7 #4). With merchant-only keys, a rotated or revoked key would
   still resolve to the merchant and could be served its cached list. With
   the hash, a key can only hit entries it filled itself. Those expire
   within the TTL, after which its requests reach the payments API and get
@@ -298,7 +298,7 @@ serves every terminal.
   can't have been sent (an error while connecting or resolving DNS) is a
   `502`. The terminal must treat the 504 as "check the payments list
   before charging again", never as a retry. The real fix for duplicates
-  is an idempotency key (Task 7 #3).
+  is an idempotency key (.NET Task 2).
 - **Last-resort error handling:**
   - An *unhandled promise rejection* is logged at ERROR
     (`event: "unhandled_rejection"`, alertable), and the BFF keeps
@@ -347,8 +347,8 @@ gateway already supports idempotency keys (`IPaymentGateway.cs`).
 - **(B)** Offer "charge again" behind a confirmation.
 - **(C)** Offer a retry that reuses the same idempotency key.
 
-**Decision:** (A) for Phase 2. (C) is the intended long-term fix (Task 7
-#3), and (B) is rejected. This is **pending confirmation from a payments
+**Decision:** (A) for Phase 2. (C) is the intended long-term fix (.NET
+Task 2), and (B) is rejected. This is **pending confirmation from a payments
 domain expert**. The research behind it is in
 `docs/unknown-payment-outcomes.md`: the industry patterns
 (idempotency-key retries, a status check before retrying, automatic

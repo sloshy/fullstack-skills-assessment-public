@@ -305,7 +305,7 @@ change to an existing response:
   The surcharge service also caches merchant config for up to 30 s
   (`MERCHANT_CACHE_TTL`), so an opt-out can take up to 30 s to reach new
   quotes, plus up to 300 s for quotes already issued. Duplicate charges are
-  the separate idempotency problem (Task 7).
+  the separate idempotency problem (.NET Task 2).
 
 ## Load test note
 
